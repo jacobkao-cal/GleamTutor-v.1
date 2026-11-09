@@ -1,0 +1,441 @@
+/*
+ * Visual style modelled on the Python Tutor screenshots in references/python-tutor/.
+ * Written from scratch (no Python Tutor CSS copied); values measured from screenshots.
+ */
+
+:root {
+  --mono: "Andale Mono", Menlo, Monaco, Consolas, "Courier New", monospace;
+  --sans: Verdana, Arial, Helvetica, sans-serif;
+  --frame-current-bg: #e2ebf6;
+  --exited-color: #a8a8a8;
+}
+
+html,
+body {
+  margin: 0;
+  background: #ffffff;
+  color: #000000;
+  font-family: var(--sans);
+  font-size: 13px;
+}
+
+.app {
+  padding: 8px 15px 30px;
+}
+
+/* ---------- Header: small and unobtrusive ---------- */
+.site-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.site-logo {
+  width: 22px;
+  height: 22px;
+}
+.site-title {
+  font-size: 14px;
+  font-weight: bold;
+}
+
+/* ---------- Edit Mode ---------- */
+.edit-mode {
+  max-width: 702px;
+}
+.edit-settings {
+  font-size: 14px;
+  margin-bottom: 7px;
+}
+.edit-settings select {
+  font-size: 13px;
+}
+
+.code-editor {
+  height: 378px;
+  border: 1px solid #dddddd;
+  overflow: auto;
+  background: #ffffff;
+}
+.code-editor-inner {
+  display: flex;
+  min-height: 100%;
+}
+.code-editor-gutter {
+  flex: none;
+  min-width: 43px;
+  background: #eeeeee;
+  color: #444444;
+  font-family: var(--mono);
+  font-size: 15px;
+  line-height: 20px;
+  text-align: right;
+}
+.gutter-line {
+  padding: 0 14px 0 6px;
+}
+.gutter-line-active {
+  background: #dcdcdc;
+}
+.code-editor-area {
+  position: relative;
+  flex: 1;
+  min-width: max-content;
+}
+.code-editor-highlight,
+.code-editor-input {
+  margin: 0;
+  padding: 0 4px;
+  border: 0;
+  font-family: var(--mono);
+  font-size: 15px;
+  line-height: 20px;
+  white-space: pre;
+  tab-size: 2;
+  letter-spacing: normal;
+}
+.code-editor-hl-line {
+  min-height: 20px;
+}
+.code-editor-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  resize: none;
+  overflow: hidden;
+  outline: none;
+  background: transparent;
+  color: transparent;
+  caret-color: #000000;
+}
+.code-editor-input::selection {
+  background: rgba(100, 150, 255, 0.3);
+  color: transparent;
+}
+
+.tok-keyword {
+  color: #a626a4;
+}
+.tok-type {
+  color: #0b6db7;
+}
+.tok-string {
+  color: #3a8a33;
+}
+.tok-number {
+  color: #b35a00;
+}
+.tok-comment {
+  color: #8a8a8a;
+  font-style: italic;
+}
+.tok-operator {
+  color: #555555;
+}
+
+.visualize-row {
+  margin-top: 13px;
+}
+.visualize-button {
+  font-family: var(--sans);
+  font-size: 16px;
+  padding: 5px 7px;
+}
+.edit-error {
+  margin-top: 10px;
+  max-width: 700px;
+  padding: 6px 8px;
+  background: #f87d76;
+  font-size: 13px;
+}
+.example-links {
+  margin-top: 14px;
+  font-size: 12px;
+}
+
+/* ---------- Visualization Mode ---------- */
+.visualize-mode {
+  display: flex;
+  align-items: flex-start;
+}
+.viz-left {
+  flex: none;
+  width: 492px;
+  padding: 10px 15px 10px 0;
+  border-right: 1px solid #dddddd;
+  min-height: 360px;
+}
+.viz-right {
+  flex: 1;
+  padding: 10px 0 0 15px;
+  min-width: 0;
+}
+
+.viz-language {
+  text-align: center;
+  font-size: 12px;
+  line-height: 16px;
+  margin-bottom: 4px;
+}
+.demo-trace-label {
+  color: #9d1e18;
+  font-weight: bold;
+}
+
+.source-wrapper {
+  display: flex;
+  justify-content: center;
+}
+.source-display {
+  border-collapse: collapse;
+  border-top: 1px solid #999999;
+  border-bottom: 1px solid #999999;
+  font-family: var(--mono);
+  font-size: 14px;
+  margin-left: -26px; /* the arrow column sits to the left, as in Python Tutor */
+}
+.source-display td {
+  padding: 0;
+  height: 22px;
+  vertical-align: middle;
+  white-space: pre;
+}
+.source-display tr:first-child td {
+  padding-top: 4px;
+}
+.source-display tr:last-child td {
+  padding-bottom: 4px;
+}
+.arrow-cell {
+  width: 24px;
+  text-align: right;
+}
+.source-display .line-number {
+  color: #aaaaaa;
+  width: 26px;
+  text-align: right;
+  padding-right: 10px;
+}
+.source-line {
+  padding-right: 8px;
+  min-width: 120px;
+}
+.range-next {
+  text-decoration: underline;
+  text-decoration-color: #e93f34;
+  text-underline-offset: 3px;
+}
+.range-just {
+  text-decoration: underline;
+  text-decoration-color: #7cc07c;
+  text-underline-offset: 3px;
+}
+.line-arrow {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.edit-link-row {
+  text-align: center;
+  margin: 16px 0 12px;
+}
+.edit-code-link {
+  color: #3d58a2;
+  font-size: 15px;
+}
+
+.arrow-legend {
+  font-size: 12px;
+  color: #333333;
+  line-height: 19px;
+}
+.arrow-legend .line-arrow {
+  margin-right: 3px;
+}
+
+.playback-controls {
+  margin-top: 12px;
+  text-align: center;
+}
+/* Plain grey track + white handle, like Python Tutor's slider. */
+.step-slider {
+  display: block;
+  width: 100%;
+  margin: 0 0 8px;
+  height: 18px;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.step-slider::-webkit-slider-runnable-track {
+  height: 8px;
+  background: #f2f2f2;
+  border: 1px solid #c5c5c5;
+  border-radius: 4px;
+}
+.step-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 11px;
+  height: 17px;
+  margin-top: -5.5px;
+  background: #ffffff;
+  border: 1px solid #888888;
+  border-radius: 4px;
+}
+.step-slider::-moz-range-track {
+  height: 8px;
+  background: #f2f2f2;
+  border: 1px solid #c5c5c5;
+  border-radius: 4px;
+}
+.step-slider::-moz-range-thumb {
+  width: 11px;
+  height: 17px;
+  background: #ffffff;
+  border: 1px solid #888888;
+  border-radius: 4px;
+}
+.step-slider:focus-visible {
+  outline: 1px dotted #555555;
+}
+.vcr-buttons button {
+  font-family: var(--sans);
+  font-size: 13px;
+  margin: 0 3px;
+}
+.step-counter {
+  margin-top: 8px;
+  font-size: 14px;
+}
+.trace-error {
+  margin-top: 10px;
+  padding: 6px 8px;
+  background: #f87d76;
+}
+
+.print-output-label {
+  font-size: 11px;
+  color: #333333;
+  margin-bottom: 4px;
+}
+.print-output {
+  display: block;
+  width: 352px;
+  height: 26px;
+  resize: both;
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 2px 4px;
+  border: 1px solid #999999;
+}
+
+/* ---------- Environment diagram ---------- */
+.env-diagram {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  margin-top: 26px;
+}
+.column-header {
+  font-size: 14px;
+  color: #333333;
+  margin-bottom: 14px;
+}
+.frames-column {
+  flex: none;
+  min-width: 112px;
+}
+.frames-column .column-header {
+  text-align: right;
+  padding-right: 6px;
+}
+.objects-column {
+  flex: none;
+  padding-left: 66px;
+}
+.objects-column .column-header {
+  padding-left: 0;
+}
+
+.frame {
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 6px 8px 8px;
+  margin-bottom: 14px;
+  border-left: 1px dotted #aaaaaa;
+  background: #ffffff;
+}
+.frame-current {
+  background: var(--frame-current-bg);
+  border-left: 1px solid var(--frame-current-bg);
+}
+.frame-exited {
+  color: var(--exited-color);
+  border-left: 1px dotted #cccccc;
+}
+.frame-header {
+  margin-bottom: 6px;
+  white-space: nowrap;
+}
+.frame-vars {
+  border-collapse: collapse;
+  margin-left: auto;
+}
+.frame-vars td {
+  padding: 3px 0;
+}
+.frame-var-name {
+  text-align: right;
+  padding-right: 6px !important;
+  vertical-align: middle;
+}
+.frame-return-label {
+  font-family: var(--sans);
+  font-size: 12px;
+  line-height: 14px;
+  text-align: center !important;
+}
+.frame-var-value {
+  min-width: 20px;
+  height: 18px;
+  padding: 2px 4px !important;
+  border-left: 1px solid #888888;
+  border-bottom: 1px solid #888888;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.frame-exited .frame-var-value {
+  border-color: #cccccc;
+}
+.ref-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #005583;
+  margin-left: 10px;
+}
+.frame-exited .ref-dot {
+  background: var(--exited-color);
+}
+
+.heap-object {
+  font-family: var(--mono);
+  font-size: 13px;
+  margin-bottom: 16px;
+  white-space: nowrap;
+}
+.objects-column .column-header + .heap-object {
+  margin-top: 30px;
+}
+
+.pointer-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
