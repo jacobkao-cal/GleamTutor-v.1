@@ -2,8 +2,8 @@
  * Instruments the JavaScript produced by the official Gleam compiler.
  *
  * Each compiled function is first ALIGNED with the subset recogniser's view of
- * the Gleam source: same functions, same parameters, the same `let` bindings
- * in the same order, then one `return`. Any difference (an unexpected compiled
+ * the Gleam source: same functions, same parameters, the same statements
+ * (`let` bindings and expression statements) in the same order, then one `return`. Any difference (an unexpected compiled
  * shape, a temporary, a loop, a branch) makes the program unsupported; we never
  * guess a mapping.
  *
@@ -65,8 +65,9 @@ export function instrument(js: string, module: SubsetModule): string {
 
   for (const stmt of program.body) {
     if (stmt.type === "ImportDeclaration") {
+      // Prelude and stdlib imports; linkProgram (stdlib.ts) checks them against the stdlib.
       const src = (stmt as Node & { source: { value: string } }).source.value;
-      if (src !== "./gleam.mjs") throw new AlignmentError(`unexpected import of ${src}`);
+      if (src !== "./gleam.mjs" && !/^\.\/gleam\/[a-z0-9_/]+\.mjs$/.test(src)) throw new AlignmentError(`unexpected import of ${src}`);
       continue;
     }
     const decl = (stmt.type === "ExportNamedDeclaration" ? (stmt as Node & { declaration: Node | null }).declaration : stmt) as Node | null;
@@ -100,8 +101,8 @@ function instrumentFunction(node: FunctionDeclaration, fn: SubsetFunction): Edit
   }
 
   const body = node.body.body;
-  if (body.length !== fn.lets.length + 1) {
-    throw new AlignmentError(`${fn.name}: compiled body has ${body.length} statements, expected ${fn.lets.length + 1}`);
+  if (body.length !== fn.body.length + 1) {
+    throw new AlignmentError(`${fn.name}: compiled body has ${body.length} statements, expected ${fn.body.length + 1}`);
   }
   const edits: Edit[] = [];
   const args = params.map((p, i) => `[${JSON.stringify(fn.params[i])}, ${p}]`).join(", ");
@@ -110,7 +111,16 @@ function instrumentFunction(node: FunctionDeclaration, fn: SubsetFunction): Edit
     text: ` const ${FRAME} = ${RECORDER}.call(${JSON.stringify(fn.name)}, ${locLiteral(fn.header)}, [${args}]);`,
   });
 
-  fn.lets.forEach((letStmt, i) => {
+  fn.body.forEach((stmt, i) => {
+    if (stmt.kind === "expr") {
+      // An expression evaluated for its effect, e.g. io.println(x).
+      const e = body[i];
+      if (e.type !== "ExpressionStatement") throw new AlignmentError(`${fn.name}: statement ${i + 1} is not an expression statement`);
+      edits.push({ at: e.start, text: `${RECORDER}.line(${FRAME}, ${locLiteral(stmt.loc)}); ` });
+      edits.push({ at: e.end, text: ` ${RECORDER}.done(${FRAME}, ${locLiteral(stmt.loc)});` });
+      return;
+    }
+    const letStmt = stmt;
     const s = body[i] as VariableDeclaration;
     const d = s.type === "VariableDeclaration" && s.kind === "let" && s.declarations.length === 1 ? s.declarations[0] : null;
     if (!d || d.id.type !== "Identifier" || !d.init) throw new AlignmentError(`${fn.name}: statement ${i + 1} is not a simple let`);

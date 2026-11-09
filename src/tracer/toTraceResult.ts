@@ -4,11 +4,18 @@
  * fields are dropped here; they never reach the UI.
  */
 import type { TraceResult } from "../trace/tracer";
+import { STDLIB_VERSION } from "./toolchainFiles";
 import type { EngineResult } from "./traceGleam";
 
 export const SUPPORTED_SUMMARY =
-  "So far the tracer can step through Int and Bool values, let bindings (including shadowing), " +
-  "arithmetic, comparisons, && and ||, and calls to functions defined in your program, including recursion.";
+  "So far the tracer can step through Int, Bool, String and Nil values, let bindings (including shadowing), " +
+  "arithmetic, comparisons, && and ||, string concatenation with <>, calls to functions defined in your program " +
+  "(including recursion), and gleam_stdlib functions such as io.println and int.to_string.";
+
+/** Extra help for compiler errors about imports. */
+function compileHint(title: string): string {
+  return title === "Unknown module" ? `. Only the Gleam standard library (gleam_stdlib ${STDLIB_VERSION}) can be imported` : "";
+}
 
 const lowerFirst = (s: string) => (/^[A-Z][a-z]/.test(s) ? s[0].toLowerCase() + s.slice(1) : s);
 
@@ -24,7 +31,7 @@ export function toTraceResult(r: EngineResult): TraceResult {
       const d = r.diagnostic;
       return {
         status: "compile_error",
-        message: `The Gleam compiler found a problem: ${d.title}`,
+        message: `The Gleam compiler found a problem: ${d.title}${compileHint(d.title)}`,
         ...(d.line ? { location: { line: d.line, ...(d.column ? { column: d.column } : {}) } } : {}),
         details: d.message,
       };
@@ -33,7 +40,7 @@ export function toTraceResult(r: EngineResult): TraceResult {
       return {
         status: "unsupported",
         feature: r.feature,
-        message: r.feature === "Compiled code shape" || r.feature === "Recorded value" ? `${r.message}. ${SUPPORTED_SUMMARY}` : unsupportedMessage(r.feature),
+        message: r.feature === "Compiled code shape" || r.feature === "Recorded value" ? `Step-by-step tracing stopped: ${r.message}. ${SUPPORTED_SUMMARY}` : unsupportedMessage(r.feature),
         ...(r.line ? { location: { line: r.line, ...(r.column ? { column: r.column } : {}) } } : {}),
       };
     case "runtime_error":

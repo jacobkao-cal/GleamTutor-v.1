@@ -10,15 +10,20 @@
  * program only ever runs as JavaScript produced by the official compiler, and
  * this module runs only after the official compiler has accepted the program.
  *
- * Supported subset (POC):
- *   module      := function*
+ * Supported subset (Phase 2D):
+ *   module      := import* function*
+ *   import      := "import" "gleam/..." (a gleam_stdlib module; no `.{...}`, no `as`)
  *   function    := ["pub"] "fn" name "(" [param ("," param)* [","]] ")" ["->" type] "{" body "}"
  *   param       := name [":" type]
- *   type        := "Int" | "Bool"
- *   body        := ("let" name [":" type] "=" expr)* expr
- *   expr        := Int/Bool literals, variables, calls to module functions,
- *                  unary - and !, binary + - * / % == != < > <= >= && ||
+ *   type        := "Int" | "Bool" | "String" | "Nil"
+ *   body        := statement* expr
+ *   statement   := "let" name [":" type] "=" expr  |  expr
+ *   expr        := Int/Bool/Nil/String literals, variables, calls to this module's functions,
+ *                  calls to stdlib functions (module.fn(...)) whose declared result type is
+ *                  Int, Bool, String or Nil, unary - and !,
+ *                  binary <> + - * / % == != < > <= >= && ||
  */
+import { checkStdlibCall, type StdlibInfo } from "./stdlib";
 
 export interface Loc {
   line: number;
@@ -27,10 +32,18 @@ export interface Loc {
   endColumn: number; // exclusive
 }
 
-export interface SubsetLet {
-  name: string;
-  loc: Loc; // from `let` to the end of the initializer
-  hasCall: boolean;
+/** A statement before a function's final expression. */
+export type SubsetStmt =
+  /** `let name = expr`; loc runs from `let` to the end of the initializer. */
+  | { kind: "let"; name: string; loc: Loc; hasCall: boolean }
+  /** An expression evaluated for its effect, such as `io.println(x)`. */
+  | { kind: "expr"; loc: Loc; hasCall: boolean };
+
+export interface SubsetImport {
+  /** e.g. "gleam/io" */
+  module: string;
+  /** The name used in calls, e.g. "io". */
+  alias: string;
 }
 
 export interface SubsetFunction {
@@ -39,7 +52,7 @@ export interface SubsetFunction {
   params: string[];
   /** `pub fn name(...) -> T {` */
   header: Loc;
-  lets: SubsetLet[];
+  body: SubsetStmt[];
   /** The final expression whose value the function produces. */
   tail: { loc: Loc; hasCall: boolean };
   /** Signature text for display, e.g. `fn square(x: Int) -> Int`. */
@@ -47,7 +60,13 @@ export interface SubsetFunction {
 }
 
 export interface SubsetModule {
+  imports: SubsetImport[];
   functions: SubsetFunction[];
+}
+
+export interface SubsetOptions {
+  /** Stdlib metadata; without it, any import is refused. */
+  stdlib?: StdlibInfo;
 }
 
 export class UnsupportedError extends Error {
@@ -62,9 +81,11 @@ export class UnsupportedError extends Error {
 
 // ---------------------------------------------------------------- tokenizer
 
-type TokKind = "int" | "lname" | "uname" | "kw" | "op" | "eof";
+/** "bad": a construct outside the subset; the parser reports `feature` if it reaches it. */
+type TokKind = "int" | "string" | "lname" | "uname" | "kw" | "op" | "bad" | "eof";
 interface Tok {
   kind: TokKind;
+  feature?: string;
   text: string;
   line: number;
   col: number;
@@ -72,10 +93,9 @@ interface Tok {
   endCol: number;
 }
 
-const KEYWORDS = new Set(["pub", "fn", "let"]);
+const KEYWORDS = new Set(["pub", "fn", "let", "import"]);
 /** Gleam keywords outside the subset, with the feature name shown to students. */
 const UNSUPPORTED_KEYWORDS: Record<string, string> = {
-  import: "Imports (e.g. gleam/io)",
   case: "case expressions",
   type: "Custom types",
   const: "Module constants",
@@ -85,7 +105,7 @@ const UNSUPPORTED_KEYWORDS: Record<string, string> = {
   todo: "todo",
   echo: "echo",
   opaque: "Opaque types",
-  as: "as",
+  as: "Aliases (as)",
   if: "if",
 };
 const OPERATORS = [
@@ -94,7 +114,6 @@ const OPERATORS = [
 ];
 const UNSUPPORTED_OPERATORS: Record<string, string> = {
   "<-": "use expressions",
-  "<>": "Strings",
   "|>": "Pipelines",
   "..": "List spreads and record updates",
   "+.": "Floats",
@@ -105,7 +124,6 @@ const UNSUPPORTED_OPERATORS: Record<string, string> = {
   ">.": "Floats",
   "<=.": "Floats",
   ">=.": "Floats",
-  ".": "Module or field access",
   "#": "Tuples",
   "[": "Lists",
   "]": "Lists",
@@ -140,13 +158,28 @@ export function tokenize(source: string): Tok[] {
     }
     const startLine = line;
     const startCol = col;
-    const push = (kind: TokKind, text: string) => {
+    const push = (kind: TokKind, text: string, feature?: string) => {
       advance(text.length);
-      toks.push({ kind, text, line: startLine, col: startCol, endLine: line, endCol: col });
+      toks.push({ kind, text, line: startLine, col: startCol, endLine: line, endCol: col, ...(feature ? { feature } : {}) });
     };
-    if (rest[0] === '"') throw new UnsupportedError("Strings", startLine, startCol);
-    if (/^0[xXoObB]/.test(rest)) throw new UnsupportedError("Non-decimal Int literals", startLine, startCol);
-    if (/^\d[\d_]*\.\d?/.test(rest)) throw new UnsupportedError("Floats", startLine, startCol);
+    if (rest[0] === '"') {
+      // A Gleam string literal (it may span lines). The official compiler has
+      // already accepted the program, so only its extent matters here.
+      let j = 1;
+      while (j < rest.length && rest[j] !== '"') j += rest[j] === "\\" ? 2 : 1;
+      push("string", rest.slice(0, j + 1));
+      continue;
+    }
+    const nonDecimal = /^0[xXoObB][0-9a-fA-F_]*/.exec(rest);
+    if (nonDecimal) {
+      push("bad", nonDecimal[0], "Non-decimal Int literals");
+      continue;
+    }
+    const float = /^\d[\d_]*\.[\d_]*(?:e-?\d+)?/.exec(rest);
+    if (float) {
+      push("bad", float[0], "Floats");
+      continue;
+    }
     const num = /^\d[\d_]*/.exec(rest);
     if (num) {
       push("int", num[0]);
@@ -155,9 +188,9 @@ export function tokenize(source: string): Tok[] {
     const lname = /^[a-z_][a-z0-9_]*/.exec(rest);
     if (lname) {
       const w = lname[0];
-      if (w.startsWith("_")) throw new UnsupportedError("Discard names (starting with _)", startLine, startCol);
-      if (UNSUPPORTED_KEYWORDS[w]) throw new UnsupportedError(UNSUPPORTED_KEYWORDS[w], startLine, startCol);
-      push(KEYWORDS.has(w) ? "kw" : "lname", w);
+      if (w.startsWith("_")) push("bad", w, "Discard names (starting with _)");
+      else if (UNSUPPORTED_KEYWORDS[w]) push("bad", w, UNSUPPORTED_KEYWORDS[w]);
+      else push(KEYWORDS.has(w) ? "kw" : "lname", w);
       continue;
     }
     const uname = /^[A-Z][A-Za-z0-9]*/.exec(rest);
@@ -167,11 +200,11 @@ export function tokenize(source: string): Tok[] {
     }
     const op = OPERATORS.find((o) => rest.startsWith(o));
     if (op) {
-      if (UNSUPPORTED_OPERATORS[op]) throw new UnsupportedError(UNSUPPORTED_OPERATORS[op], startLine, startCol);
-      push("op", op);
+      if (UNSUPPORTED_OPERATORS[op]) push("bad", op, UNSUPPORTED_OPERATORS[op]);
+      else push("op", op);
       continue;
     }
-    throw new UnsupportedError(`Character ${JSON.stringify(rest[0])}`, startLine, startCol);
+    push("bad", rest[0], `Character ${JSON.stringify(rest[0])}`);
   }
   toks.push({ kind: "eof", text: "", line, col, endLine: line, endCol: col });
   return toks;
@@ -188,11 +221,12 @@ const BINARY_PRECEDENCE: Record<string, number> = {
   ">": 4,
   "<=": 4,
   ">=": 4,
-  "+": 5,
-  "-": 5,
-  "*": 6,
-  "/": 6,
-  "%": 6,
+  "<>": 5,
+  "+": 6,
+  "-": 6,
+  "*": 7,
+  "/": 7,
+  "%": 7,
 };
 
 interface ExprInfo {
@@ -207,13 +241,15 @@ interface PendingName {
   locals: Set<string>;
 }
 
-export function parseSubset(source: string): SubsetModule {
+export function parseSubset(source: string, options: SubsetOptions = {}): SubsetModule {
   const toks = tokenize(source);
   let p = 0;
   const peek = () => toks[p];
   const next = () => toks[p++];
+  // The first construct the parser cannot handle is reported; if that is an
+  // unsupported token, its own feature name is the clearer message.
   const fail = (feature: string, t: Tok = peek()): never => {
-    throw new UnsupportedError(feature, t.line, t.col);
+    throw new UnsupportedError(t.kind === "bad" ? t.feature! : feature, t.line, t.col);
   };
   const expect = (text: string, feature: string) => {
     if (peek().text !== text || peek().kind === "eof") fail(feature);
@@ -225,7 +261,7 @@ export function parseSubset(source: string): SubsetModule {
     const t = peek();
     if (t.kind === "kw" && t.text === "fn") fail("Function types");
     if (t.kind !== "uname") fail("This type annotation");
-    if (t.text !== "Int" && t.text !== "Bool") fail(`The type ${t.text}`);
+    if (!["Int", "Bool", "String", "Nil"].includes(t.text)) fail(`The type ${t.text}`);
     next();
     if (peek().text === "(") fail("Generic types");
     return t.text;
@@ -233,12 +269,12 @@ export function parseSubset(source: string): SubsetModule {
 
   const parsePrimary = (locals: Set<string>): ExprInfo => {
     const t = peek();
-    if (t.kind === "int") {
+    if (t.kind === "int" || t.kind === "string") {
       next();
       return { hasCall: false, last: t };
     }
     if (t.kind === "uname") {
-      if (t.text !== "True" && t.text !== "False") fail("Custom type constructors");
+      if (t.text !== "True" && t.text !== "False" && t.text !== "Nil") fail("Custom type constructors");
       next();
       return { hasCall: false, last: t };
     }
@@ -248,20 +284,22 @@ export function parseSubset(source: string): SubsetModule {
     }
     if (t.kind === "lname") {
       next();
+      if (peek().text === ".") {
+        // module.function(...) for an imported stdlib module
+        const imp = imports.find((i) => i.alias === t.text);
+        if (!imp || locals.has(t.text)) fail("Record field access", peek());
+        next();
+        const fnTok = peek();
+        if (fnTok.kind !== "lname") fail("Module constants and constructors", fnTok);
+        next();
+        if (peek().text !== "(") fail(`Using ${t.text}.${fnTok.text} as a value`, fnTok);
+        const check = checkStdlibCall(options.stdlib!, imp!.module, imp!.alias, fnTok.text);
+        if (!check.ok) fail(check.feature, t);
+        return parseArgs(locals);
+      }
       if (peek().text === "(") {
         names.push({ name: t.text, tok: t, kind: "call", locals: new Set(locals) });
-        next();
-        let hasCall = true;
-        while (peek().text !== ")") {
-          if (peek().kind === "lname" && toks[p + 1]?.text === ":") fail("Labelled arguments");
-          const arg = parseExpr(locals, 0);
-          hasCall ||= arg.hasCall;
-          if (peek().text === ",") next();
-          else if (peek().text !== ")") fail("This argument syntax");
-        }
-        const close = next();
-        if (peek().text === "(") fail("Calling the result of a call");
-        return { hasCall, last: close };
+        return parseArgs(locals);
       }
       names.push({ name: t.text, tok: t, kind: "value", locals: new Set(locals) });
       return { hasCall: false, last: t };
@@ -270,6 +308,21 @@ export function parseSubset(source: string): SubsetModule {
     if (t.text === "{") fail("Blocks");
     if (t.text === "(") fail("Parenthesised expressions");
     return fail("This expression");
+  };
+
+  /** Arguments of a call, from "(" to ")"; the call itself counts as a call. */
+  const parseArgs = (locals: Set<string>): ExprInfo => {
+    next(); // (
+    while (peek().text !== ")") {
+      if (peek().kind === "lname" && toks[p + 1]?.text === ":") fail("Labelled arguments");
+      if (peek().text === "_") fail("Function captures (like add(10, _))", { ...peek(), kind: "op" });
+      parseExpr(locals, 0);
+      if (peek().text === ",") next();
+      else if (peek().text !== ")") fail("This argument syntax");
+    }
+    const close = next();
+    if (peek().text === "(") fail("Calling the result of a call");
+    return { hasCall: true, last: close };
   };
 
   const parseExpr = (locals: Set<string>, minPrec: number): ExprInfo => {
@@ -286,8 +339,30 @@ export function parseSubset(source: string): SubsetModule {
 
   const locOf = (start: Tok, end: Tok): Loc => ({ line: start.line, column: start.col, endLine: end.endLine, endColumn: end.endCol });
 
+  const imports: SubsetImport[] = [];
+  while (peek().text === "import") {
+    const importTok = next();
+    const parts: string[] = [];
+    for (;;) {
+      const seg = peek();
+      if (seg.kind !== "lname") fail("This import", seg);
+      parts.push(next().text);
+      if (peek().text !== "/") break;
+      next();
+    }
+    const module = parts.join("/");
+    if (peek().text === ".") fail("Unqualified imports (import module.{...})");
+    if (!options.stdlib?.modules[module]) {
+      fail(`Importing ${module} (only gleam_stdlib modules can be imported)`, importTok);
+    }
+    const alias = parts[parts.length - 1];
+    if (imports.some((i) => i.alias === alias)) fail(`Two imports named ${alias}`, importTok);
+    imports.push({ module, alias });
+  }
+
   const functions: SubsetFunction[] = [];
   while (peek().kind !== "eof") {
+    if (peek().text === "import") fail("Imports after function definitions");
     const start = peek();
     let isPublic = false;
     if (peek().text === "pub") {
@@ -325,11 +400,10 @@ export function parseSubset(source: string): SubsetModule {
     }
     const open = expect("{", "This function body");
     const locals = new Set(params);
-    const lets: SubsetLet[] = [];
+    const body: SubsetStmt[] = [];
     let tail: SubsetFunction["tail"] | null = null;
     while (peek().text !== "}") {
       if (peek().kind === "eof") fail("An unclosed function body");
-      if (tail) fail("Expression statements (a value computed and then discarded)", toks[p]);
       const stmtStart = peek();
       if (stmtStart.text === "let") {
         next();
@@ -343,11 +417,13 @@ export function parseSubset(source: string): SubsetModule {
         }
         expect("=", "This let statement");
         const e = parseExpr(locals, 0);
-        lets.push({ name: n.text, loc: locOf(stmtStart, e.last), hasCall: e.hasCall });
+        body.push({ kind: "let", name: n.text, loc: locOf(stmtStart, e.last), hasCall: e.hasCall });
         locals.add(n.text);
       } else {
         const e = parseExpr(locals, 0);
-        tail = { loc: locOf(stmtStart, e.last), hasCall: e.hasCall };
+        const stmt = { loc: locOf(stmtStart, e.last), hasCall: e.hasCall };
+        if (peek().text === "}") tail = stmt;
+        else body.push({ kind: "expr", ...stmt });
       }
     }
     if (!tail) fail("A function body that ends with a let (it needs a final expression)");
@@ -357,7 +433,7 @@ export function parseSubset(source: string): SubsetModule {
       isPublic,
       params,
       header: locOf(start, open),
-      lets,
+      body,
       tail: tail!,
       signature: `fn ${nameTok.text}(${sigParams.join(", ")})${returnType ? ` -> ${returnType}` : ""}`,
     });
@@ -377,5 +453,5 @@ export function parseSubset(source: string): SubsetModule {
   if (!main || !main.isPublic || main.params.length > 0) {
     throw new UnsupportedError("Programs without `pub fn main()`", 1, 1);
   }
-  return { functions };
+  return { imports, functions };
 }

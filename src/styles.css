@@ -679,6 +679,17 @@ textarea {
   white-space: nowrap;
   color: var(--color-text);
 }
+/* String values: Gleam literal syntax in the editor's string colour; long ones wrap. */
+.frame-var-value .value-string {
+  display: inline-block;
+  max-width: 24em;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  color: #50a14f;
+}
+.frame-exited .frame-var-value .value-string {
+  color: var(--color-exited);
+}
 .frame-current .frame-var-value {
   border-color: #d79acd;
 }

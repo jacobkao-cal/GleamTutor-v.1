@@ -4,27 +4,26 @@
  *   page (this file)                      sandbox iframe (sandbox/host.js)
  *   ────────────────                      ─────────────────────────────────
  *   fetch + SHA-256-verify toolchain ──►  <iframe sandbox="allow-scripts" srcdoc>
+ *   (compiler + precompiled gleam_stdlib)
  *   postMessage {init, compile, execute}   opaque origin: no cookies, storage or DOM access to the app
  *   validate every reply (outcome.ts)      CSP: connect-src 'none', scripts only by hash or blob:
- *                                          ├─ compile worker (official Gleam WASM compiler), reused
- *                                          └─ execution worker, new per run, terminated after it or on timeout
+ *                                          ├─ compile worker (official Gleam WASM compiler + stdlib sources), reused
+ *                                          └─ execution worker, new per run, terminated after it or on timeout;
+ *                                             links the program to the stdlib bundle via blob: URLs
  *
  * Nothing runs until the first real trace is requested; the 5 MB compiler is
  * loaded then. The page itself never evaluates compiled code.
  */
-import manifest from "../../tracer-node/toolchain.json";
 import { clampLimits } from "./events";
 import { RECORDER_SYMBOL } from "./instrument";
 import { validateCompileReply, validateRunOutcome } from "./outcome";
 import { parseDiagnostic, type CompileOutput, type ProgramFiles, type TracerRuntime } from "./runtime";
+import type { StdlibInfo } from "./stdlib";
+import { fetchVerified, GLEAM_VERSION, loadStdlibInfo } from "./toolchainFiles";
 import compileWorkerSource from "./sandbox/compileWorker.js?raw";
 import hostSource from "./sandbox/host.js?raw";
 import recorderSource from "./sandbox/recorder.js?raw";
 import runWorkerSource from "./sandbox/runWorker.js?raw";
-
-export const GLEAM_VERSION: string = manifest.gleamVersion;
-export const TOOLCHAIN_BASE = `/gleam-toolchain/${GLEAM_VERSION}/`;
-const BROWSER_FILES: Record<string, string> = manifest.browserFiles;
 
 const SANDBOX_START_TIMEOUT_MS = 30_000;
 const COMPILE_TIMEOUT_MS = 20_000;
@@ -36,12 +35,9 @@ export class SandboxError extends Error {}
 interface Toolchain {
   glue: string;
   wasm: ArrayBuffer;
-  prelude: string;
-}
-
-async function sha256Hex(data: ArrayBuffer): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  stdlibInfo: StdlibInfo;
+  stdlibSources: Record<string, string>;
+  stdlibBundle: string;
 }
 
 async function sha256Base64(text: string): Promise<string> {
@@ -49,21 +45,19 @@ async function sha256Base64(text: string): Promise<string> {
   return btoa(String.fromCharCode(...new Uint8Array(digest)));
 }
 
-async function fetchVerified(name: string): Promise<ArrayBuffer> {
-  const url = TOOLCHAIN_BASE + name;
-  const res = await fetch(url);
-  if (!res.ok) throw new SandboxError(`could not load ${url} (HTTP ${res.status}); run: npm run tracer:setup`);
-  const buf = await res.arrayBuffer();
-  if ((await sha256Hex(buf)) !== BROWSER_FILES[name]) throw new SandboxError(`${url} does not match its pinned checksum`);
-  return buf;
-}
-
 let toolchainPromise: Promise<Toolchain> | null = null;
 function loadToolchain(): Promise<Toolchain> {
   toolchainPromise ??= (async () => {
-    const [glue, wasm, prelude] = await Promise.all(["gleam_wasm.js", "gleam_wasm_bg.wasm", "gleam_prelude.mjs"].map(fetchVerified));
+    const names = ["gleam_wasm.js", "gleam_wasm_bg.wasm", "stdlib.sources.json", "stdlib.bundle.mjs"];
+    const [[glue, wasm, sources, bundle], stdlibInfo] = await Promise.all([Promise.all(names.map(fetchVerified)), loadStdlibInfo()]);
     const text = (b: ArrayBuffer) => new TextDecoder().decode(b);
-    return { glue: text(glue), wasm, prelude: text(prelude) };
+    return {
+      glue: text(glue),
+      wasm,
+      stdlibInfo,
+      stdlibSources: JSON.parse(text(sources)) as Record<string, string>,
+      stdlibBundle: text(bundle),
+    };
   })().catch((e) => {
     toolchainPromise = null; // allow a retry
     throw e;
@@ -143,7 +137,8 @@ class Sandbox {
         type: "init",
         glue: toolchain.glue,
         wasm: toolchain.wasm.slice(0), // a copy; the original stays available for a restart
-        prelude: toolchain.prelude,
+        stdlibSources: toolchain.stdlibSources,
+        stdlibBundle: toolchain.stdlibBundle,
         compileWorkerSource,
         // Classic worker script: recorder.js is an ES module for Node, so drop its `export` keywords.
         runWorkerSource: `${recorderSource.replace(/^export /gm, "")}\n${runWorkerSource}`,
@@ -201,6 +196,8 @@ export function resetSandbox() {
 export const browserRuntime: TracerRuntime = {
   gleamVersion: GLEAM_VERSION,
 
+  loadStdlib: loadStdlibInfo,
+
   async compile(source: string): Promise<CompileOutput> {
     const sandbox = await getSandbox();
     const raw = await sandbox.request({ type: "compile", source }, COMPILE_TIMEOUT_MS);
@@ -217,7 +214,7 @@ export const browserRuntime: TracerRuntime = {
     const limits = clampLimits(requested);
     const sandbox = await getSandbox();
     const raw = (await sandbox.request(
-      { type: "execute", files: { instrumented: program.instrumented, original: program.original }, limits, recorderSymbol: RECORDER_SYMBOL },
+      { type: "execute", program, limits, recorderSymbol: RECORDER_SYMBOL },
       limits.timeoutMs + EXECUTE_GRACE_MS,
     )) as { outcome?: unknown } | null;
     if (raw === null) {

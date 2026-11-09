@@ -10,11 +10,19 @@ import { GT_EXAMPLES } from "../../examples.js";
 import { DEFAULT_LIMITS, type RawEvent } from "../../src/tracer/events";
 import { validateCompileReply, validateRunOutcome } from "../../src/tracer/outcome";
 import { looksTraceable } from "../../src/tracer/traceable";
+import { loadStdlibInfo } from "../compiler";
 import { expectOk, traceGleam } from "./helpers";
 
 const call: RawEvent = { t: "call", frame: 1, fn: "main", loc: [1, 1, 1, 16], args: [] };
 const ret: RawEvent = { t: "return", frame: 1, value: { kind: "int", value: "6" }, loc: [2, 3, 2, 8] };
-const okOutcome = { status: "ok", events: [call, ret], result: { kind: "int", value: "6" }, baselineResult: { kind: "int", value: "6" }, stdout: "" };
+const okOutcome = {
+  status: "ok",
+  events: [call, ret],
+  result: { kind: "int", value: "6" },
+  baselineResult: { kind: "int", value: "6" },
+  stdout: "",
+  baselineStdout: "",
+};
 
 describe("validateRunOutcome (sandbox replies are untrusted)", () => {
   it("accepts a well-formed outcome", () => {
@@ -23,7 +31,7 @@ describe("validateRunOutcome (sandbox replies are untrusted)", () => {
 
   it("accepts a real outcome produced by the shared recorder", async () => {
     const r = expectOk(await traceGleam("fn sq(x: Int) -> Int {\n  x * x\n}\n\npub fn main() {\n  sq(3)\n}\n"));
-    const outcome = { status: "ok", events: r.events, result: r.result, baselineResult: r.result, stdout: "" };
+    const outcome = { status: "ok", events: r.events, result: r.result, baselineResult: r.result, stdout: "", baselineStdout: "" };
     expect(validateRunOutcome(JSON.parse(JSON.stringify(outcome)), DEFAULT_LIMITS)).not.toBeNull();
   });
 
@@ -63,10 +71,11 @@ describe("traceable marking is computed and agrees with the real engine", () => 
 
   it.each(programs)("%s", async (_name, code) => {
     const engineAccepts = (await traceGleam(code)).status === "ok";
-    expect(looksTraceable(code)).toBe(engineAccepts);
+    expect(looksTraceable(code, loadStdlibInfo())).toBe(engineAccepts);
   });
 
-  it("no library example is traceable yet (all of them import gleam/io)", () => {
-    expect(GT_EXAMPLES.filter((e) => looksTraceable(e.code))).toEqual([]);
+  it("the targeted basic examples are traceable", () => {
+    const ids = GT_EXAMPLES.filter((e) => looksTraceable(e.code, loadStdlibInfo())).map((e) => e.id);
+    expect(ids).toEqual(expect.arrayContaining(["hello", "assignments", "functions"]));
   });
 });

@@ -7,7 +7,15 @@ export type RawLoc = [number, number, number, number];
 export type RawValue =
   | { kind: "int"; value: string }
   | { kind: "bool"; value: boolean }
+  | { kind: "string"; value: string }
+  | { kind: "nil" }
+  /** A value the tracer cannot display yet; `jsType` describes it (e.g. "List"). */
   | { kind: "unsupported"; jsType: string };
+
+/** Longest string value copied out of a run (longer ones stop the run with a limit). */
+export const MAX_STRING_VALUE = 10_000;
+/** Budget for all String values recorded in one run, together. */
+export const MAX_RECORDED_STRING_CHARS = 1_000_000;
 
 export type RawEvent =
   /** A function was entered; args are its parameter bindings. */
@@ -17,10 +25,22 @@ export type RawEvent =
   /** A `let` initializer finished; the name is now bound. */
   | { t: "bind"; frame: number; name: string; value: RawValue; loc: RawLoc }
   /** The function produced the value of its final expression. */
-  | { t: "return"; frame: number; value: RawValue; loc: RawLoc };
+  | { t: "return"; frame: number; value: RawValue; loc: RawLoc }
+  /** An expression statement (e.g. `io.println(x)`) finished. */
+  | { t: "done"; frame: number; loc: RawLoc }
+  /** The program printed `text` (exactly what the stdlib wrote, newline included). */
+  | { t: "out"; text: string };
 
 export type RunOutcome =
-  | { status: "ok"; events: RawEvent[]; result: RawValue; baselineResult: RawValue; stdout: string }
+  | {
+      status: "ok";
+      events: RawEvent[];
+      result: RawValue;
+      baselineResult: RawValue;
+      stdout: string;
+      /** Output of the uninstrumented run; must equal `stdout`. */
+      baselineStdout: string;
+    }
   | { status: "runtime_error"; events: RawEvent[]; message: string; stdout: string }
   | { status: "limit"; events: RawEvent[]; message: string }
   | { status: "timeout"; message: string }

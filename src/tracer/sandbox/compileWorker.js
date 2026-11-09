@@ -1,7 +1,10 @@
 // Browser compile worker: runs the official Gleam WASM compiler inside the sandbox.
-// init: { type: "init", glue, wasm } -> { type: "ready" } | { type: "init_failed", error }
+// init: { type: "init", glue, wasm, stdlibSources } -> { type: "ready" } | { type: "init_failed", error }
+// Every compile also gets the pinned gleam_stdlib's Gleam sources, so stdlib
+// imports type-check; only `main` is read back.
 // compile: { id, source } -> { id, ok: true, js, warnings } | { id, ok: false, error }
 let wasm = null;
+let stdlibSources = {};
 let project = 0;
 self.onmessage = async ({ data }) => {
   if (data.type === "init") {
@@ -9,6 +12,7 @@ self.onmessage = async ({ data }) => {
       wasm = await import(URL.createObjectURL(new Blob([data.glue], { type: "text/javascript" })));
       wasm.initSync({ module: data.wasm });
       wasm.initialise_panic_hook(false);
+      stdlibSources = data.stdlibSources;
       self.postMessage({ type: "ready" });
     } catch (e) {
       self.postMessage({ type: "init_failed", error: String(e) });
@@ -18,6 +22,7 @@ self.onmessage = async ({ data }) => {
   const id = data.id;
   const pid = ++project;
   try {
+    for (const name of Object.keys(stdlibSources)) wasm.write_module(pid, name, stdlibSources[name]);
     wasm.write_module(pid, "main", data.source);
     wasm.compile_package(pid, "javascript");
     const warnings = [];

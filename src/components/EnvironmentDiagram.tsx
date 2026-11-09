@@ -3,6 +3,7 @@
  * reference bindings to objects. Pure function of (step, options).
  */
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { gleamStringLiteral } from "../trace/format";
 import type { TraceFrame, TraceObject, TraceStep, TraceValue } from "../trace/types";
 
 interface Props {
@@ -28,7 +29,7 @@ function ValueCell({ value, srcKey }: { value: TraceValue; srcKey: string }) {
     case "ref":
       return <span className="ref-dot" data-ref-src={srcKey} data-ref-target={value.id} />;
     case "string":
-      return <span className="value-string">{JSON.stringify(value.value)}</span>;
+      return <span className="value-string">{gleamStringLiteral(value.value)}</span>;
     case "bool":
       return <span>{value.value ? "True" : "False"}</span>;
     case "nil":

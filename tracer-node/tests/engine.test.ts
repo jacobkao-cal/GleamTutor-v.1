@@ -199,11 +199,27 @@ describe("error taxonomy, end to end", () => {
         status: "ok",
         events: [],
         stdout: "",
+        baselineStdout: "",
         result: { kind: "int", value: "7" },
         baselineResult: { kind: "int", value: "6" },
       })),
     );
     expect(r.status).toBe("internal_error");
+  });
+
+  it("the differential check also compares printed output", async () => {
+    const r = await engineTrace(
+      SIMPLE,
+      withExecute(async () => ({
+        status: "ok",
+        events: [],
+        stdout: "a\n",
+        baselineStdout: "b\n",
+        result: { kind: "int", value: "6" },
+        baselineResult: { kind: "int", value: "6" },
+      })),
+    );
+    expect(r).toEqual({ status: "internal_error", message: "The instrumented program printed different output from the uninstrumented one" });
   });
 
   it("limits passed to the runtime are clamped to the hard ceilings", async () => {
@@ -221,9 +237,9 @@ describe("UI-facing results (toTraceResult)", () => {
   });
 
   it("unsupported features are named in plain words, with their location", async () => {
-    const r = toTraceResult(await traceGleam('import gleam/io\n\npub fn main() {\n  io.println("hi")\n}\n'));
-    expect(r).toMatchObject({ status: "unsupported", feature: "Imports (e.g. gleam/io)", location: { line: 1, column: 1 } });
-    expect(r.status === "unsupported" && r.message).toMatch(/^Step-by-step tracing doesn't support imports \(e\.g\. gleam\/io\) yet\./);
+    const r = toTraceResult(await traceGleam("pub fn main() {\n  case 1 {\n    _ -> 2\n  }\n}\n"));
+    expect(r).toMatchObject({ status: "unsupported", feature: "case expressions", location: { line: 2, column: 3 } });
+    expect(r.status === "unsupported" && r.message).toMatch(/^Step-by-step tracing doesn't support case expressions yet\./);
   });
 
   it("ok results carry only the trace (no compiled JS or raw events)", async () => {

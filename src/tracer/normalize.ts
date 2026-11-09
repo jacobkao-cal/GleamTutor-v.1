@@ -15,6 +15,12 @@
  *    steps (no deep copies). Copying every frame into every step costs
  *    O(steps x frames) and crashed the host process during deep recursion.
  *  - The total snapshot size is capped (maxSnapshotFrames).
+ *  - Printed output (`out` events) does not make steps of its own. Each step's
+ *    stdout is everything printed up to and including that step, so stepping
+ *    backward shows less output and stepping forward shows it again.
+ *  - An expression statement (`io.println(x)`) records "about to evaluate"
+ *    (`line`) and "finished" (`done`); merged into one step when only output
+ *    happened in between.
  */
 import { hashSource, normalizeSource } from "../trace/source";
 import {
@@ -42,16 +48,35 @@ export const MAX_SNAPSHOT_FRAMES = 200_000;
 const toLoc = ([line, column, endLine, endColumn]: RawLoc): SourceLocation => ({ line, column, endLine, endColumn });
 
 function toValue(v: RawValue): TraceValue {
-  if (v.kind === "unsupported") throw new NormalizeError(`value of JS type ${v.jsType} is outside the supported subset`);
-  return v.kind === "int" ? { kind: "int", value: v.value } : { kind: "bool", value: v.value };
+  switch (v.kind) {
+    case "int":
+      return { kind: "int", value: v.value };
+    case "bool":
+      return { kind: "bool", value: v.value };
+    case "string":
+      return { kind: "string", value: v.value };
+    case "nil":
+      return { kind: "nil" };
+    default:
+      throw new NormalizeError(`a value of type ${v.jsType} can't be shown yet`);
+  }
 }
 
-const EVENT_KIND: Record<RawEvent["t"], TraceEventKind> = { call: "call", line: "eval", bind: "bind", return: "return" };
+type StepEvent = Exclude<RawEvent, { t: "out" }>;
 
+const EVENT_KIND: Record<StepEvent["t"], TraceEventKind> = { call: "call", line: "eval", bind: "bind", return: "return", done: "eval" };
+
+/**
+ * Drops a `line` ("about to evaluate") event when the same statement finishes
+ * (bind / return / done) with nothing but printed output in between.
+ */
 export function mergeEvents(events: RawEvent[]): RawEvent[] {
   return events.filter((e, i) => {
-    const n = events[i + 1];
-    return !(e.t === "line" && n && (n.t === "bind" || n.t === "return") && n.frame === e.frame && n.loc.join() === e.loc.join());
+    if (e.t !== "line") return true;
+    let j = i + 1;
+    while (events[j]?.t === "out") j++;
+    const n = events[j];
+    return !(n && (n.t === "bind" || n.t === "return" || n.t === "done") && n.frame === e.frame && n.loc.join() === e.loc.join());
   });
 }
 
@@ -95,7 +120,15 @@ export function normalize(
     st.frame = { ...st.frame, bindings: [...st.frame.bindings.filter((b) => b.name !== name), binding] };
   };
 
-  events.forEach((e, i) => {
+  let stdout = "";
+  const stepEvents = events.filter((e): e is StepEvent => e.t !== "out");
+  let k = 0; // index into stepEvents
+  events.forEach((e) => {
+    if (e.t === "out") {
+      stdout += e.text;
+      return;
+    }
+    const i = k++;
     if (e.t === "call") {
       const st: FrameState = {
         frame: { id: `frame-${e.fn}-${e.frame}`, functionName: e.fn, parentId: "module-main", status: "active", bindings: [] },
@@ -110,7 +143,7 @@ export function normalize(
       if (e.t === "bind") setBinding(st, e.name, toValue(e.value));
       if (e.t === "return") st.frame = { ...st.frame, status: "exited", returnValue: toValue(e.value) };
     }
-    const next = events[i + 1];
+    const next = stepEvents[i + 1];
     snapshotFrames += order.length + 1;
     if (snapshotFrames > maxSnapshotFrames) {
       throw new NormalizeLimitError(`Trace is too large to visualize (more than ${maxSnapshotFrames} frame snapshots)`);
@@ -121,15 +154,19 @@ export function normalize(
       source: toLoc(e.loc),
       justExecuted: i === 0 ? null : toLoc(e.loc),
       nextToExecute: next ? toLoc(next.loc) : null,
-      stdout: "",
+      stdout,
       // Shared, never mutated: a later event replaces a frame object instead of changing it.
       frames: [moduleFrame, ...order.map((id) => frames.get(id)!.frame)],
       objects,
       error: null,
-      note: e.t === "call" ? `call ${e.fn}` : e.t === "bind" ? `bind ${e.name}` : e.t === "return" ? "return" : "evaluate",
+      note: e.t === "call" ? `call ${e.fn}` : e.t === "bind" ? `bind ${e.name}` : e.t === "return" ? "return" : e.t === "done" ? "evaluated" : "evaluate",
     });
   });
-  if (error && steps.length > 0) steps[steps.length - 1] = { ...steps[steps.length - 1], error };
+  if (steps.length > 0) {
+    // Output printed after the last step (e.g. just before a crash) belongs to that last step.
+    const last = steps[steps.length - 1];
+    steps[steps.length - 1] = { ...last, stdout, ...(error ? { error } : {}) };
+  }
 
   return {
     schemaVersion: TRACE_SCHEMA_VERSION,

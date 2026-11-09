@@ -37,6 +37,10 @@ export function eventSummary(r: Ok): string[] {
         return `bind ${e.name}=${"value" in e.value ? e.value.value : "?"}`;
       case "return":
         return `return ${"value" in e.value ? e.value.value : "?"}`;
+      case "out":
+        return `out ${JSON.stringify(e.text)}`;
+      case "done":
+        return `done ${e.loc[0]}`;
       default:
         return `line ${e.loc[0]}`;
     }

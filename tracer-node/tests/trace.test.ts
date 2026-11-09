@@ -230,10 +230,13 @@ describe("failures are explicit", () => {
   });
 
   it.each([
-    ["imports", `import gleam/io\n\npub fn main() {\n  io.println("hi")\n}\n`, "Imports (e.g. gleam/io)", 1],
+    ["unqualified imports", `import gleam/io.{println}\n\npub fn main() {\n  println("hi")\n}\n`, "Unqualified imports (import module.{...})", 1],
+    ["import aliases", `import gleam/io as out\n\npub fn main() {\n  out.println("hi")\n}\n`, "Aliases (as)", 1],
+    ["stdlib calls with List results", `import gleam/string\n\npub fn main() {\n  let parts = string.split("a,b", ",")\n  1\n}\n`, "Calling string.split (its result type, List(String), can't be shown yet)", 4],
+    ["stdlib calls with Float results", `import gleam/int\n\npub fn main() {\n  let f = int.to_float(2)\n  1\n}\n`, "Calling int.to_float (its result type, Float, can't be shown yet)", 4],
+    ["nondeterministic stdlib calls", `import gleam/int\n\npub fn main() {\n  int.random(10)\n}\n`, "Calling int.random (its result is different on every run)", 4],
     ["case", `pub fn main() {\n  case 1 {\n    _ -> 2\n  }\n}\n`, "case expressions", 2],
     ["lists", `pub fn main() {\n  let xs = [1, 2]\n  xs\n}\n`, "Lists", 2],
-    ["strings", `pub fn main() {\n  "hi"\n}\n`, "Strings", 2],
     ["floats", `pub fn main() {\n  let f = 1.5\n  f\n}\n`, "Floats", 2],
     ["anonymous fns", `pub fn main() {\n  let f = fn(x) { x }\n  f(1)\n}\n`, "Anonymous functions", 2],
     ["blocks", `pub fn main() {\n  let y = {\n    3\n  }\n  y\n}\n`, "Blocks", 2],

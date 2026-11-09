@@ -93,9 +93,10 @@ describe("real tracing in the browser", () => {
   });
 
   it("unsupported programs get a located notice", async () => {
-    await setSource('import gleam/io\n\npub fn main() {\n  io.println("hi")\n}\n');
+    await setSource('pub fn main() {\n  case 1 {\n    _ -> "one"\n  }\n}\n');
     await visualize();
-    expect(await text('[role="alert"]')).toContain("doesn't support imports (e.g. gleam/io) yet");
+    expect(await text('[role="alert"]')).toContain("doesn't support case expressions yet");
+    expect(await text('[role="alert"]')).toContain("(line 2, column 3)");
   });
 
   it("runaway recursion is stopped by the depth limit", async () => {
@@ -119,7 +120,16 @@ describe("the sandbox boundary", () => {
             if (ev.source === frame.contentWindow && ev.data?.id === id) resolve(ev.data.outcome);
           });
           const limits = { timeoutMs: timeout, maxEvents: 5000, maxDepth: 500, maxStdout: 10000, maxHeapMb: 64 };
-          frame.contentWindow!.postMessage({ type: "execute", id, files: { instrumented: code, original: code }, limits, recorderSymbol: "gleam-tutor.tracer" }, "*");
+          // A linked program of two standalone modules (see src/tracer/stdlib.ts).
+          const program = {
+            modules: [
+              { id: "original.mjs", parts: [code], deps: [] },
+              { id: "main.mjs", parts: [code], deps: [] },
+            ],
+            original: "original.mjs",
+            instrumented: "main.mjs",
+          };
+          frame.contentWindow!.postMessage({ type: "execute", id, program, limits, recorderSymbol: "gleam-tutor.tracer" }, "*");
         }),
       js,
       timeoutMs,
@@ -183,5 +193,73 @@ describe("the sandbox boundary", () => {
     await visualize();
     await page.click("xpath/.//button[contains(., 'Last')]");
     expect(await text('[data-frame-id="frame-main-1"] [data-binding="__return"]')).toContain("16");
+  });
+});
+
+describe("Phase 2D: gleam_stdlib, Strings and Print Output in the browser", () => {
+  const output = () => page.$eval('textarea[aria-label="Print output"]', (t) => (t as HTMLTextAreaElement).value);
+  const pick = async (title: string) => {
+    const value = await page.$eval(
+      'select[aria-label="Example programs"]',
+      (sel, t) => [...(sel as HTMLSelectElement).options].find((o) => o.textContent!.startsWith(t as string))!.value,
+      title,
+    );
+    await page.select('select[aria-label="Example programs"]', value);
+  };
+  const button = (label: string) => page.click(`xpath/.//button[contains(., '${label}')]`);
+
+  it("the dropdown marks exactly the examples the tracer supports, computed from their code", async () => {
+    await page.waitForFunction(() => [...document.querySelectorAll("option")].some((o) => o.textContent!.includes("(step-through)")));
+    const marked = await page.$$eval("option", (os) => os.filter((o) => o.textContent!.includes("(step-through)")).map((o) => o.value));
+    expect(marked.sort()).toEqual(["assignments", "functions", "hello"]);
+  });
+
+  it("Hello world prints both lines, step by step, and playback rewinds the output", async () => {
+    await pick("Hello world");
+    await visualize();
+    expect(await text(".viz-language")).toContain("Live trace");
+    expect(await text(".step-counter")).toBe("Step 1 of 3");
+    expect(await output()).toBe("");
+    await button("Next");
+    expect(await output()).toBe("Hello, Joe!\n");
+    await button("Last");
+    expect(await output()).toBe("Hello, Joe!\nHello, Mike!\n");
+    await button("Prev");
+    expect(await output()).toBe("Hello, Joe!\n");
+    await button("First");
+    expect(await output()).toBe("");
+  });
+
+  it("Assignments and shadowing shows String values as Gleam literals", async () => {
+    await pick("Assignments and shadowing");
+    await visualize();
+    await button("Last");
+    expect(await output()).toBe("Original\nOriginal\nNew\nOriginal\n");
+    expect(await text('[data-frame-id="frame-main-1"] [data-binding="x"] .value-string')).toBe('"New"');
+    expect(await text('[data-frame-id="frame-main-1"] [data-binding="y"] .value-string')).toBe('"Original"');
+  });
+
+  it("Functions shows user frames, real values and the printed result", async () => {
+    await pick("Functions");
+    await visualize();
+    await button("Last");
+    expect(await output()).toBe("10\n");
+    const frames = await page.$$eval("[data-frame-id]", (fs) => fs.map((f) => f.getAttribute("data-frame-id")));
+    expect(frames).toEqual(["module-main", "frame-main-1", "frame-add-2", "frame-double-3", "frame-multiply-4"]);
+    expect(await text('[data-frame-id="frame-main-1"] [data-binding="doubled"]')).toContain("10");
+  });
+
+  it("io.print adds no newline in the browser either; Unicode output is kept", async () => {
+    await setSource('import gleam/io\n\npub fn main() {\n  io.print("a")\n  io.print("b")\n  io.println("c 🌟")\n}\n');
+    await visualize();
+    await button("Last");
+    expect(await output()).toBe("abc 🌟\n");
+  });
+
+  it("an example the tracer cannot step through stays editable, with the reason", async () => {
+    await pick("Recursion: factorial");
+    await visualize();
+    expect(await text('[role="alert"]')).toContain("doesn't support case expressions yet");
+    expect(await page.$('textarea[aria-label="Gleam source code"]')).not.toBeNull();
   });
 });

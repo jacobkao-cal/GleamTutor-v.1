@@ -5,6 +5,17 @@ import { clampLimits, DEFAULT_LIMITS, MAX_LIMITS, type RawEvent } from "../../sr
 import { AlignmentError, gleamNameOf, instrument } from "../../src/tracer/instrument";
 import { mergeEvents, normalize, NormalizeLimitError } from "../../src/tracer/normalize";
 import { runInWorker } from "../runner";
+import type { ProgramFiles } from "../../src/tracer/link";
+
+/** A program of two standalone modules (no stdlib imports) for runner tests. */
+const program = (instrumented: string, original: string): ProgramFiles => ({
+  modules: [
+    { id: "original.mjs", parts: [original], deps: [] },
+    { id: "main.mjs", parts: [instrumented], deps: [] },
+  ],
+  original: "original.mjs",
+  instrumented: "main.mjs",
+});
 import { parseSubset, UnsupportedError } from "../../src/tracer/subset";
 
 const SQUARE = `pub fn square(x: Int) -> Int {
@@ -25,7 +36,7 @@ describe("subset recogniser", () => {
     expect(square).toMatchObject({ name: "square", isPublic: true, params: ["x"], signature: "fn square(x: Int) -> Int" });
     expect(square.header).toEqual({ line: 1, column: 1, endLine: 1, endColumn: 31 });
     expect(square.tail.loc).toEqual({ line: 2, column: 3, endLine: 2, endColumn: 8 });
-    expect(main.lets.map((l) => [l.name, l.loc, l.hasCall])).toEqual([
+    expect(main.body.map((l) => [l.kind === "let" ? l.name : "", l.loc, l.hasCall])).toEqual([
       ["a", { line: 6, column: 3, endLine: 6, endColumn: 12 }, false],
       ["b", { line: 7, column: 3, endLine: 7, endColumn: 20 }, true],
     ]);
@@ -34,11 +45,12 @@ describe("subset recogniser", () => {
 
   it("handles multi-line expressions and comments", () => {
     const m = parseSubset(`// comment\npub fn main() {\n  let a =\n    1 +\n    2\n  /// doc\n  a\n}\n`);
-    expect(m.functions[0].lets[0].loc).toEqual({ line: 3, column: 3, endLine: 5, endColumn: 6 });
+    expect(m.functions[0].body[0].loc).toEqual({ line: 3, column: 3, endLine: 5, endColumn: 6 });
   });
 
   it.each([
-    [`pub fn main() {\n  1\n  2\n}\n`, "Expression statements (a value computed and then discarded)"],
+    [`pub fn main() {\n  let x = 1\n}\n`, "A function body that ends with a let (it needs a final expression)"],
+    [`fn f(x: Float) -> Int {\n  1\n}\npub fn main() {\n  1\n}\n`, "The type Float"],
     [`pub fn main() {\n  let _x = 1\n  2\n}\n`, "Discard names (starting with _)"],
     [`fn f(label x: Int) -> Int {\n  x\n}\npub fn main() {\n  1\n}\n`, "Labelled parameters"],
     [`fn f(x: Int) -> Int {\n  x\n}\npub fn main() {\n  f(x: 1)\n}\n`, "Labelled arguments"],
@@ -77,7 +89,7 @@ describe("instrumentation alignment", () => {
     ["a renamed binding", good.replace(/\ba\b/g, "z")],
     ["a loop", good.replace("return x * x;", "while (true) { return x * x; }")],
     ["a missing function", good.replace(/export function square[\s\S]*?\n}\n/, "")],
-    ["an unexpected import", `import * as $io from "./gleam/io.mjs";\n` + good],
+    ["an unexpected import", `import * as $evil from "../evil.mjs";\n` + good],
   ])("refuses compiled code with %s", (_, js) => {
     expect(() => instrument(js, module)).toThrow(AlignmentError);
   });
@@ -145,20 +157,20 @@ describe("isolated runner", () => {
   it("terminates a program that never finishes", async () => {
     const spin = "export function main() { while (true) {} }\n";
     const started = Date.now();
-    const r = await runInWorker({ instrumented: spin, original: "export function main() { return 0; }\n" }, { timeoutMs: 500 });
+    const r = await runInWorker(program(spin, "export function main() { return 0; }\n"), { timeoutMs: 500 });
     expect(r.status).toBe("timeout");
     expect(Date.now() - started).toBeLessThan(3000);
   });
 
   it("stops a program that exhausts its memory budget", async () => {
     const hog = "export function main() { const a = []; while (true) a.push(new Array(1e5).fill(1)); }\n";
-    const r = await runInWorker({ instrumented: hog, original: "export function main() { return 0; }\n" }, { timeoutMs: 10_000, maxHeapMb: 32 });
-    expect(["limit", "internal_error"]).toContain(r.status);
+    const r = await runInWorker(program(hog, "export function main() { return 0; }\n"), { timeoutMs: 10_000, maxHeapMb: 32 });
+    expect(r.status).toBe("limit");
   });
 
   it("does not expose environment variables to the program", async () => {
     const peek = "export function main() { return Object.keys(process.env).length; }\n";
-    const r = await runInWorker({ instrumented: peek, original: peek });
+    const r = await runInWorker(program(peek, peek));
     expect(r).toMatchObject({ status: "ok", result: { kind: "int", value: "0" } });
   });
 });

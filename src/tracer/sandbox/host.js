@@ -10,7 +10,7 @@
   // Classic workers: Chrome refuses blob: MODULE workers in an opaque-origin
   // sandbox, while classic workers can still import() blob: modules.
   const workerFrom = (text) => new Worker(URL.createObjectURL(new Blob([text], { type: "text/javascript" })));
-  let init = null; // { compileWorker, prelude, runWorkerSource }
+  let init = null; // { compileWorker, bundle, runWorkerSource }
   const compileWaiters = new Map();
 
   function startCompiler(m) {
@@ -23,8 +23,8 @@
       if (reply) reply(data);
     };
     compileWorker.onerror = (e) => send({ type: "init_failed", error: `compile worker error: ${e.message ?? "unknown"}` });
-    compileWorker.postMessage({ type: "init", glue: m.glue, wasm: m.wasm });
-    init = { compileWorker, prelude: m.prelude, runWorkerSource: m.runWorkerSource };
+    compileWorker.postMessage({ type: "init", glue: m.glue, wasm: m.wasm, stdlibSources: m.stdlibSources });
+    init = { compileWorker, bundle: m.stdlibBundle, runWorkerSource: m.runWorkerSource };
   }
 
   function execute(m) {
@@ -46,11 +46,7 @@
       e.preventDefault();
       finish({ status: "internal_error", message: `Execution worker error: ${e.message ?? "unknown"}` });
     };
-    worker.postMessage({
-      files: { instrumented: m.files.instrumented, original: m.files.original, prelude: init.prelude },
-      limits: m.limits,
-      recorderSymbol: m.recorderSymbol,
-    });
+    worker.postMessage({ program: m.program, bundle: init.bundle, limits: m.limits, recorderSymbol: m.recorderSymbol });
   }
 
   window.addEventListener("message", (ev) => {

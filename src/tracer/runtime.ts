@@ -7,10 +7,14 @@
  * in isolation with resource limits.
  *
  * Implementations:
- *  - tracer-node/nodeRuntime.ts: Node worker_threads (tests, CLI, local dev preview)
- *  - Phase 2C: a browser runtime (sandboxed iframe + Web Workers), not built yet.
+ *  - tracer-node/nodeRuntime.ts: Node worker_threads (engine tests, CLI)
+ *  - src/tracer/browserRuntime.ts: sandboxed iframe + Web Workers (the app)
  */
 import type { RunLimits, RunOutcome } from "./events";
+import type { ProgramFiles } from "./link";
+import type { StdlibInfo } from "./stdlib";
+
+export type { ProgramFiles } from "./link";
 
 export interface Diagnostic {
   /** e.g. "Syntax error", "Type mismatch", "Unknown variable" */
@@ -23,21 +27,17 @@ export interface Diagnostic {
 
 export type CompileOutput = { ok: true; js: string; warnings: string[] } | { ok: false; diagnostic: Diagnostic };
 
-export interface ProgramFiles {
-  /** Instrumented compiled module. */
-  instrumented: string;
-  /** Untouched compiled module (baseline run for the differential check). */
-  original: string;
-}
-
 export interface TracerRuntime {
   /** Version of the official Gleam compiler this runtime uses. */
   readonly gleamVersion: string;
-  /** Compiles one module named `main` to JavaScript with the official compiler. */
+  /** Metadata of the pinned gleam_stdlib that compile() and execute() use. */
+  loadStdlib(): Promise<StdlibInfo>;
+  /** Compiles one module named `main` (with gleam_stdlib available) to JavaScript with the official compiler. */
   compile(source: string): Promise<CompileOutput>;
   /**
-   * Runs the baseline then the instrumented program in a disposable, isolated
-   * context. Must enforce `limits` itself (the caller has already clamped them).
+   * Links `program` to the stdlib bundle, then runs the baseline and the
+   * instrumented program in a disposable, isolated context. Must enforce
+   * `limits` itself (the caller has already clamped them).
    */
   execute(program: ProgramFiles, limits: RunLimits): Promise<RunOutcome>;
 }

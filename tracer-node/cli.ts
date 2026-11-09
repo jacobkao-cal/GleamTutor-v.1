@@ -19,7 +19,8 @@ if (flag === "--json") {
   console.log(`status: ${result.status}`);
   console.log(JSON.stringify(result, (k, v) => (k === "events" || k === "trace" ? undefined : v), 2));
 } else {
-  const show = (v: { kind: string; value?: unknown; id?: string }) => (v.kind === "ref" ? `→${v.id}` : String(v.value));
+  const show = (v: { kind: string; value?: unknown; id?: string }) =>
+    v.kind === "ref" ? `→${v.id}` : v.kind === "nil" ? "Nil" : v.kind === "string" ? JSON.stringify(v.value) : String(v.value);
   console.log(`status: ok   (Gleam ${result.gleamVersion}, ${result.trace.steps.length} steps, main() = ${show(result.result)})\n`);
   for (const s of result.trace.steps) {
     const frames = s.frames
@@ -32,7 +33,8 @@ if (flag === "--json") {
       .join("  ");
     const arrow = (l: { line: number } | null) => (l ? String(l.line) : "-");
     console.log(
-      `${String(s.index + 1).padStart(3)}  ${s.event.padEnd(6)} green ${arrow(s.justExecuted).padStart(2)}  red ${arrow(s.nextToExecute).padStart(2)}   ${frames}`,
+      `${String(s.index + 1).padStart(3)}  ${s.event.padEnd(6)} green ${arrow(s.justExecuted).padStart(2)}  red ${arrow(s.nextToExecute).padStart(2)}   ${frames}` +
+        (s.stdout ? `   | output ${JSON.stringify(s.stdout)}` : ""),
     );
   }
 }

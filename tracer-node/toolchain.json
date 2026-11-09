@@ -12,7 +12,18 @@
   },
   "browserFiles": {
     "gleam_wasm.js": "583130200462e34bcc4ce86b29cfc30077770aa03d44f1cd4f3073a43cf60117",
-    "gleam_wasm_bg.wasm": "9f86f133b7835b125f9d2250b4759431f5c53cc45fd8922857f1f15723abf902",
-    "gleam_prelude.mjs": "90bdfff5f22caa4e0df1f831e0f754eb31d1425230a4f3725e5a5be846aef9ee"
+    "gleam_wasm_bg.wasm": "9f86f133b7835b125f9d2250b4759431f5c53cc45fd8922857f1f15723abf902"
+  },
+  "stdlib": {
+    "version": "1.0.5",
+    "url": "https://repo.hex.pm/tarballs/gleam_stdlib-1.0.5.tar",
+    "sha256": "cee5b6c076a85b45f60c585f4316c63ec8b7127c119d5738c3958a9c4d50404e",
+    "license": "Apache-2.0"
+  },
+  "esbuild": "0.21.5",
+  "generated": {
+    "stdlib.bundle.mjs": "f35b748b8fb4b9b27529d6d932585e690710258bd07df893ab82f67b27cef5a8",
+    "stdlib.json": "64c78f812d09706ad2d99116b598f31fd2a57edd22879cddb710278c4f12155f",
+    "stdlib.sources.json": "bfd72544e41592c10c2989f19eb0ea6efeb2f8e9a8e478666173e21a049860b5"
   }
 }

@@ -4,7 +4,7 @@
  * checks its shape AND bounds its size (the Phase 2A host out-of-memory
  * lesson), and never trusts a count or length it did not check.
  */
-import type { RawEvent, RawLoc, RawValue, RunLimits, RunOutcome } from "./events";
+import { MAX_RECORDED_STRING_CHARS, MAX_STRING_VALUE, type RawEvent, type RawLoc, type RawValue, type RunLimits, type RunOutcome } from "./events";
 
 const MAX_TEXT = 100_000;
 const MAX_NAME = 200;
@@ -22,12 +22,15 @@ function isValue(x: unknown): x is RawValue {
   if (!v || typeof v !== "object") return false;
   if (v.kind === "int") return isText(v.value, 400) && /^-?\d+$/.test(v.value);
   if (v.kind === "bool") return typeof v.value === "boolean";
+  if (v.kind === "string") return isText(v.value, MAX_STRING_VALUE);
+  if (v.kind === "nil") return true;
   if (v.kind === "unsupported") return isText(v.jsType, MAX_NAME);
   return false;
 }
 
-function isEvent(x: unknown): x is RawEvent {
+function isEvent(x: unknown, limits: RunLimits): x is RawEvent {
   const e = x as RawEvent;
+  if (e && typeof e === "object" && e.t === "out") return isText(e.text, limits.maxStdout);
   if (!e || typeof e !== "object" || !isInt(e.frame) || e.frame < 1 || !isLoc(e.loc)) return false;
   switch (e.t) {
     case "call":
@@ -38,6 +41,7 @@ function isEvent(x: unknown): x is RawEvent {
         e.args.every((a) => Array.isArray(a) && a.length === 2 && isText(a[0], MAX_NAME) && isValue(a[1]))
       );
     case "line":
+    case "done":
       return true;
     case "bind":
       return isText(e.name, MAX_NAME) && isValue(e.value);
@@ -50,7 +54,19 @@ function isEvent(x: unknown): x is RawEvent {
 
 function isEvents(x: unknown, limits: RunLimits): x is RawEvent[] {
   // Check the length BEFORE walking the array.
-  return Array.isArray(x) && x.length <= limits.maxEvents && x.every(isEvent);
+  if (!Array.isArray(x) || x.length > limits.maxEvents || !x.every((e) => isEvent(e, limits))) return false;
+  // Printed text in total is bounded too, not just each piece.
+  let printed = 0;
+  let stringChars = 0;
+  const count = (v: RawValue) => {
+    if (v.kind === "string") stringChars += v.value.length;
+  };
+  for (const e of x as RawEvent[]) {
+    if (e.t === "out") printed += e.text.length;
+    else if (e.t === "bind" || e.t === "return") count(e.value);
+    else if (e.t === "call") e.args.forEach(([, v]) => count(v));
+  }
+  return printed <= limits.maxStdout && stringChars <= MAX_RECORDED_STRING_CHARS;
 }
 
 /** Returns the outcome if it is well formed and within limits, otherwise null. */
@@ -59,8 +75,12 @@ export function validateRunOutcome(x: unknown, limits: RunLimits): RunOutcome | 
   if (!o || typeof o !== "object") return null;
   switch (o.status) {
     case "ok":
-      return isEvents(o.events, limits) && isValue(o.result) && isValue(o.baselineResult) && isText(o.stdout, limits.maxStdout)
-        ? { status: "ok", events: o.events, result: o.result, baselineResult: o.baselineResult, stdout: o.stdout }
+      return isEvents(o.events, limits) &&
+        isValue(o.result) &&
+        isValue(o.baselineResult) &&
+        isText(o.stdout, limits.maxStdout) &&
+        isText(o.baselineStdout, limits.maxStdout + MAX_TEXT)
+        ? { status: "ok", events: o.events, result: o.result, baselineResult: o.baselineResult, stdout: o.stdout, baselineStdout: o.baselineStdout }
         : null;
     case "runtime_error":
       return isEvents(o.events, limits) && isText(o.message) && isText(o.stdout, limits.maxStdout)

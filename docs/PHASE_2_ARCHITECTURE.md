@@ -353,3 +353,37 @@ The same input now ends with `limit: Call depth exceeded 2000` in under 100 ms. 
 - Hosting headers: serve the toolchain with long-cache immutable headers, and consider a page-level CSP for the app itself.
 - E2E tests run only in Chrome so far; Firefox and Safari need checking.
 - The §10 blockers: source maps, the Int/Float distinction, and the standard library, which would make the library examples traceable.
+
+---
+
+## 13. Phase 2D status: standard library, Strings, Print Output
+
+The details are in `tracer-node/README.md` (sections "Standard library" and "Print Output"). The per-example results are in `docs/PHASE_2D_COMPATIBILITY.md`.
+
+| Item | Result |
+| --- | --- |
+| Stdlib integration | Official `gleam_stdlib` **1.0.5** (Hex tarball, SHA-256 pinned), matching compiler **1.19.2**. The compiler gets the real stdlib sources. At run time, programs link to the stdlib precompiled by the same compiler and bundled with esbuild 0.21.5; the bundle's SHA-256 is pinned, so the build is reproducible. The Playground's approach was studied but no code was copied, since that repository has no licence. |
+| Why a bundle | `gleam_stdlib.mjs` (the FFI) imports compiled stdlib modules that import it back. Each module would need its URL before its own text could be written, which `blob:` URLs can't express for a cycle. One bundle plus generated facades has no cycles. Facades are created by cutting import specifiers out at parsed positions, so no program text is ever search-and-replaced. |
+| Stdlib calls | Atomic: the stdlib is never instrumented. A call is traceable only if its declared result type is `Int`, `Bool`, `String` or `Nil`, read from the stdlib sources. Floats and generic results stay out because they would display incorrectly. `int.random` is refused because it breaks the run-twice comparison. |
+| Strings | Literals (escapes, Unicode, multi-line), bindings, arguments, results and `<>`. They are shown as Gleam literals (`"say \"hi\"\n"`). Each value is capped at 10k characters and each run at 1M in total. |
+| Print Output | Captured from the real stdlib output paths, recorded as events, and placed at the step where it happened. Playback shows the output printed so far. The differential check also compares output. The browser worker gets an output-only `process` stand-in so `io.print` adds no newline, as under Node and `gleam run`. |
+| Expression statements | `io.println(x)` lines become steps. A statement records "about to evaluate" and "finished" events, merged into one step when only output happened in between. |
+| Capability detection | The same recogniser with the same stdlib metadata, run on the editor's current text. Visualize Execution always re-checks with the real engine, and the dropdown marks are computed. Refusals are lazy: the message names the first construct the parser can't handle, for example "Unqualified imports" rather than a later token. |
+| Examples | **3 of 20 traceable:** Hello world, Assignments and shadowing, Functions. All 20 compile and run. The other 17 need `case`, lists, tuples, custom types, closures, labelled arguments, pipelines, `use` or `let assert`. |
+| Tests | Engine 159 (26 new in `phase2d.test.ts`: programs A–H, Unicode, limits, playback invariants, the three examples). App 98 (new: Gleam string formatting, Print Output across playback). Browser e2e 14 (new: computed dropdown marks; hello, assignments and functions in Chrome; `io.print` without a newline). |
+
+**Security, unchanged from 2C:**
+- The sandbox iframe and per-run workers.
+- `connect-src 'none'`.
+- Every reply is validated, and now also has budgets for total output and String characters.
+
+New in 2D:
+- **The sandbox now holds the 210 KB stdlib bundle.** It is pinned by checksum and comes from the same origin.
+- **The `process` stand-in exposes only two no-op `write` functions,** and the recorder replaces those while a run is captured.
+- **Programs can now call any traceable stdlib function.** None of them can reach the network or storage; the CSP and the opaque origin still apply.
+- **Still open:** there is no per-worker memory limit in browsers. The subset still can't build large structures (no lists), and Strings are capped.
+
+**Known limitations:**
+- **stderr** is merged into Print Output.
+- **A stdlib call is one step,** so a crash inside the stdlib is reported at the student's line, not inside the stdlib.
+- **Bundling:** the whole 210 KB stdlib bundle is loaded by each run's worker, even when the program uses one module. A warm run of Hello world still finishes in roughly 0.4 s in the e2e suite.

@@ -24,6 +24,10 @@
     "../src/tracer/runtime.ts",
     "../src/tracer/traceGleam.ts",
     "../src/tracer/toTraceResult.ts",
+    "../src/tracer/link.ts",
+    "../src/trace/format.ts",
+    "../src/tracer/toolchainFiles.ts",
+    "../src/tracer/stdlib.ts",
     "../src/tracer/outcome.ts",
     "../src/tracer/traceable.ts",
     "compiler.ts",
@@ -35,6 +39,8 @@
     "tests/trace.test.ts",
     "tests/engine.test.ts",
     "tests/sandbox.test.ts",
-    "vitest.config.ts"
+    "tests/phase2d.test.ts",
+    "vitest.config.ts",
+    "audit.ts"
   ]
 }

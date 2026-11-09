@@ -1,8 +1,9 @@
 /**
  * The Phase 2B tracing engine pipeline:
  *
- *   Gleam source -> official compiler (Runtime) -> subset check + source anchors
- *   -> instrumentation -> isolated execution (Runtime) -> raw events
+ *   Gleam source -> official compiler, with gleam_stdlib (Runtime)
+ *   -> subset check + source anchors -> instrumentation -> link to the stdlib
+ *   -> isolated execution (Runtime) -> raw events + printed output
  *   -> differential check -> normalized ExecutionTrace -> validateTrace
  *
  * Pure orchestration: no Node or browser APIs. Never fabricates events: every
@@ -14,6 +15,8 @@ import { clampLimits, type RawEvent, type RawValue, type RunLimits } from "./eve
 import { AlignmentError, instrument } from "./instrument";
 import { NormalizeError, NormalizeLimitError, normalize } from "./normalize";
 import type { Diagnostic, TracerRuntime } from "./runtime";
+import { LinkError, linkProgram } from "./link";
+import type { StdlibInfo } from "./stdlib";
 import { parseSubset, UnsupportedError, type SubsetModule } from "./subset";
 
 /** Largest source accepted, in characters (the host bounds its own work too). */
@@ -48,18 +51,12 @@ export async function traceGleam(
     return { status: "limit", message: `Program is longer than ${MAX_SOURCE_CHARS} characters`, events: [] };
   }
 
-  // 0. Imports are refused before compiling: the engine gives the compiler no
-  //    standard library yet, so it would wrongly report valid imports as errors.
-  const importLine = source.split("\n").findIndex((l) => /^\s*import\s/.test(l)) + 1;
-  if (importLine > 0) {
-    const feature = "Imports (e.g. gleam/io)";
-    return { status: "unsupported", feature, line: importLine, column: 1, message: `${feature} (line ${importLine}, column 1) is not supported by the tracer yet` };
-  }
-
-  // 1. The official compiler decides validity; its diagnostics win.
+  // 1. The official compiler (with the real gleam_stdlib) decides validity; its diagnostics win.
   let compiled;
+  let stdlib: StdlibInfo;
   try {
     compiled = await runtime.compile(source);
+    stdlib = await runtime.loadStdlib();
   } catch (e) {
     return { status: "internal_error", message: `Compiler failed: ${describe(e)}` };
   }
@@ -68,7 +65,7 @@ export async function traceGleam(
   // 2. Capability check + source anchors (only after the compiler accepted the program).
   let module: SubsetModule;
   try {
-    module = parseSubset(source);
+    module = parseSubset(source, { stdlib });
   } catch (e) {
     if (e instanceof UnsupportedError) return { status: "unsupported", feature: e.feature, line: e.line, column: e.column, message: e.message };
     return { status: "internal_error", message: `Subset check failed: ${describe(e)}` };
@@ -85,10 +82,18 @@ export async function traceGleam(
     return { status: "internal_error", message: `Instrumentation failed: ${describe(e)}` };
   }
 
-  // 4. Run in isolation. Limits are clamped to the hard ceilings here AND by the runtime.
+  // 4. Link both programs to the stdlib bundle, then run in isolation.
+  //    Limits are clamped to the hard ceilings here AND by the runtime.
+  let program;
+  try {
+    program = linkProgram(compiled.js, instrumentedJs, stdlib);
+  } catch (e) {
+    if (e instanceof LinkError) return { status: "unsupported", feature: "Compiled code shape", message: `Could not link the compiled code (${e.message})` };
+    return { status: "internal_error", message: `Linking failed: ${describe(e)}` };
+  }
   let run;
   try {
-    run = await runtime.execute({ instrumented: instrumentedJs, original: compiled.js }, clampLimits(limits));
+    run = await runtime.execute(program, clampLimits(limits));
   } catch (e) {
     return { status: "internal_error", message: `Execution failed: ${describe(e)}` };
   }
@@ -99,15 +104,22 @@ export async function traceGleam(
       const trace = run.events.length ? normalize(source, module, run.events, { kind: "runtime", message: run.message }) : null;
       return { status: "runtime_error", message: run.message, events: run.events, trace };
     }
-    // 5. Differential check: instrumentation must not change the program's result.
+    // 5. Differential check: instrumentation must not change the program's result or output.
     if (JSON.stringify(run.result) !== JSON.stringify(run.baselineResult)) {
       return {
         status: "internal_error",
         message: `Instrumented result ${JSON.stringify(run.result)} differs from uninstrumented ${JSON.stringify(run.baselineResult)}`,
       };
     }
+    if (run.stdout !== run.baselineStdout) {
+      return { status: "internal_error", message: "The instrumented program printed different output from the uninstrumented one" };
+    }
     if (run.result.kind === "unsupported") {
-      return { status: "unsupported", feature: "main's result type", message: "main() returned a value outside the supported subset (Int or Bool)" };
+      return {
+        status: "unsupported",
+        feature: `A main() result of type ${run.result.jsType}`,
+        message: `main() returned a ${run.result.jsType} value, which can't be shown yet`,
+      };
     }
     const trace = normalize(source, module, run.events);
     const problems = validateTrace(trace, source);

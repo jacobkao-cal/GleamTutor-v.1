@@ -7,11 +7,12 @@
  */
 import { clampLimits } from "../src/tracer/events";
 import type { TracerRuntime } from "../src/tracer/runtime";
-import { compileGleam, GLEAM_VERSION } from "./compiler";
+import { compileGleam, GLEAM_VERSION, loadStdlibInfo } from "./compiler";
 import { runInWorker } from "./runner";
 
 export const nodeRuntime: TracerRuntime = {
   gleamVersion: GLEAM_VERSION,
+  loadStdlib: async () => loadStdlibInfo(),
   compile: compileGleam,
   execute: (program, limits) => runInWorker(program, clampLimits(limits)),
 };

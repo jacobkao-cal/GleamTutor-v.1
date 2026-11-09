@@ -2,10 +2,8 @@
  * Executes compiled Gleam JavaScript in a disposable worker thread with
  * resource limits. Node's worker_threads stand in for a browser Web Worker
  * here. Neither is a security sandbox on its own; see the architecture
- * report. Used for tests, the CLI and the local dev preview; not a
- * production runtime.
+ * report. Used for engine tests and the CLI; not a production runtime.
  */
-import fs from "node:fs";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { TOOLCHAIN_DIR } from "./compiler";
@@ -17,13 +15,7 @@ const WORKER_URL = new URL("./worker.mjs", import.meta.url);
 
 export function runInWorker(program: ProgramFiles, limits: Partial<RunLimits> = {}): Promise<RunOutcome> {
   const lim: RunLimits = clampLimits(limits); // never above MAX_LIMITS
-  const files = {
-    "main.mjs": program.instrumented,
-    "original.mjs": program.original,
-    // Same content the official compiler writes for gleam.mjs.
-    "gleam.mjs": 'export * from "./gleam_prelude.mjs";\n',
-    "gleam_prelude.mjs": fs.readFileSync(path.join(TOOLCHAIN_DIR, "gleam_prelude.mjs"), "utf8"),
-  };
+  const bundlePath = path.join(TOOLCHAIN_DIR, "stdlib.bundle.mjs");
 
   return new Promise((resolve) => {
     let settled = false;
@@ -35,7 +27,7 @@ export function runInWorker(program: ProgramFiles, limits: Partial<RunLimits> = 
       resolve(outcome);
     };
     const worker = new Worker(WORKER_URL, {
-      workerData: { files, limits: lim, recorderSymbol: RECORDER_SYMBOL },
+      workerData: { program, bundlePath, limits: lim, recorderSymbol: RECORDER_SYMBOL },
       resourceLimits: { maxOldGenerationSizeMb: lim.maxHeapMb, maxYoungGenerationSizeMb: 16, stackSizeMb: 4 },
       stdout: true, // keep the worker's own console away from ours
       stderr: true,
