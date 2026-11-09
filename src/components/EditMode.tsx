@@ -1,5 +1,6 @@
 /** Edit Mode: settings line, code editor, and the Visualize Execution button. */
 import { CodeEditor } from "../editor/CodeEditor";
+import { ExamplePicker } from "./ExamplePicker";
 
 interface Props {
   source: string;
@@ -8,27 +9,33 @@ interface Props {
   onShowExitedFramesChange: (v: boolean) => void;
   onVisualize: () => void;
   onLoadDemo: () => void;
+  onLoadExample: (exampleId: string) => void;
   busy: boolean;
   error: string | null;
+  /** "info" for "not traceable yet" notices, "error" for real errors such as compile failures. */
+  errorTone?: "error" | "info";
 }
 
 export function EditMode(p: Props) {
   return (
     <div className="edit-mode">
-      <div className="edit-settings">
-        Write code in{" "}
-        <select aria-label="Language" defaultValue="gleam">
-          <option value="gleam">Gleam (Demo trace only)</option>
-        </select>{" "}
-        and{" "}
-        <select
-          aria-label="Exited frames"
-          value={p.showExitedFrames ? "show" : "hide"}
-          onChange={(e) => p.onShowExitedFramesChange(e.target.value === "show")}
-        >
-          <option value="show">display frames of exited functions.</option>
-          <option value="hide">hide frames of exited functions.</option>
-        </select>
+      <div className="edit-toolbar">
+        <div className="edit-settings">
+          Write code in{" "}
+          <select aria-label="Language" defaultValue="gleam">
+            <option value="gleam">Gleam (Demo trace only)</option>
+          </select>{" "}
+          and{" "}
+          <select
+            aria-label="Exited frames"
+            value={p.showExitedFrames ? "show" : "hide"}
+            onChange={(e) => p.onShowExitedFramesChange(e.target.value === "show")}
+          >
+            <option value="show">display frames of exited functions.</option>
+            <option value="hide">hide frames of exited functions.</option>
+          </select>
+        </div>
+        <ExamplePicker source={p.source} onPick={p.onLoadExample} />
       </div>
       <CodeEditor value={p.source} onChange={p.onSourceChange} />
       <div className="visualize-row">
@@ -37,7 +44,7 @@ export function EditMode(p: Props) {
         </button>
       </div>
       {p.error && (
-        <div className="edit-error" role="alert">
+        <div className={p.errorTone === "info" ? "edit-error edit-notice" : "edit-error"} role="alert">
           {p.error}
         </div>
       )}

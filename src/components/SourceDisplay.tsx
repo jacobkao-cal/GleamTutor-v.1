@@ -12,8 +12,9 @@ interface Props {
   nextToExecute: SourceLocation | null;
 }
 
-export const GREEN_ARROW = "#9fd49f";
-export const RED_ARROW = "#e93f34";
+// Gleam palette: a deeper menthol green (readable on white) and Gleam tomato red.
+export const GREEN_ARROW = "#6fcf4a";
+export const RED_ARROW = "#ff6262";
 
 export function Arrow({ color, title }: { color: string; title: string }) {
   return (

@@ -139,6 +139,30 @@ npm run preview    # serve the production build
 | `src/components/EnvironmentDiagram.tsx` | Frames + Objects + pointer arrows |
 | `src/components/EditMode.tsx`, `VisualizeMode.tsx`, `src/App.tsx` | The two screens and the mode switch |
 
+### Visual design (branch `gleam-style`)
+
+The `gleam-style` branch keeps the Python Tutor structure and behaviour unchanged (two separate screens; code, arrows and controls on the left; Print output, Frames and Objects side by side on the right) and applies the Gleam Playground's visual identity. The unstyled Python Tutor look is preserved on the `classic-ui` branch.
+
+- **Theme tokens** live at the top of `src/styles.css` as CSS variables. They use the official Gleam colours: pink `#FFAFF3`, white `#FEFEFC`, navy `#292D3E`, blue `#A6F0FC`, aubergine `#584355`, menthol `#C8FFA7`, red `#FF6262`.
+- **Fonts and code colours** follow the Playground: Outfit for text, Lexend for titles (loaded from Google Fonts; only font files are requested), the SFMono/Consolas/Menlo stack for code, and Atom One Light syntax colours.
+- **Header:** a compact pink bar with the star logo.
+- **Layout:** content is centred with a 1260px maximum width.
+- **Frames:** the current frame is light pink, other frames have a soft pink border, and exited frames are faded and dashed.
+- **Objects and arrows:** function objects are soft-blue boxes, and pointer arrows are navy.
+- **Source arrows:** the just-executed line gets a green arrow with a menthol row tint, and the next line a red arrow with a light red tint. The exact expression is still underlined in the matching colour.
+- **Demo trace badge:** "Demo trace (predefined, not a live execution)" is shown as a yellow badge.
+- **Narrow screens:** below 920px the visualizer stacks into code and controls, then output and diagram, keeping the same order. A diagram wider than the screen scrolls inside its panel and is never clipped.
+
+### Example library (Phase 1.5)
+
+The **Choose an example...** dropdown in Edit Mode lists the examples in `examples.js`, grouped by category with `<optgroup>`. That file is the only copy of the examples; the app imports it, with types from `examples.d.ts`, through `src/examples/library.ts`.
+
+- Picking an example only loads its code into the editor, where it stays fully editable. Nothing is run or visualized automatically.
+- The dropdown shows an example's name only while the editor text matches that example exactly. After any edit it shows the placeholder again.
+- If the editor holds the student's own code, the app asks before replacing it.
+- **None of the library examples has a trace.** Clicking Visualize Execution on one shows a friendly "tracing isn't available yet" notice. Only the `square(5)` example, loaded from the link under the editor, has the Demo trace.
+- All 21 examples compile with Gleam 1.19.2 (`gleam_stdlib` 1.0.5) and run on the JavaScript target. `let assert` crashes on purpose.
+
 ### Demo trace conventions
 
 - Green arrow = the location whose evaluation produced the current snapshot; red arrow = the next location to evaluate. The exact expression is underlined in the arrow's colour, so several events on one line stay distinct.

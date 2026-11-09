@@ -10,7 +10,7 @@ interface Props {
   showExitedFrames: boolean;
 }
 
-export const POINTER_COLOR = "#005583";
+export const POINTER_COLOR = "#292d3e"; // Gleam underwater blue
 
 function frameTitle(f: TraceFrame): string {
   return f.status === "module" ? `module ${f.functionName}` : f.functionName;
@@ -125,10 +125,14 @@ function usePointers(dep: unknown) {
       setPointers((prev) => (JSON.stringify(prev) === JSON.stringify(out) ? prev : out));
     };
     measure();
+    // Web fonts change text widths after first paint; re-measure once they load.
+    let alive = true;
+    document.fonts?.ready.then(() => alive && measure());
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
     ro?.observe(container);
     window.addEventListener("resize", measure);
     return () => {
+      alive = false;
       ro?.disconnect();
       window.removeEventListener("resize", measure);
     };

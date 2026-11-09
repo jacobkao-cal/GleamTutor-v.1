@@ -373,3 +373,5 @@ fn first_letter(word: String) -> String {
 ` },
 ];
 if (typeof module !== 'undefined') module.exports = GT_EXAMPLES;
+// ES module export so the Vite app imports this file directly (types: examples.d.ts).
+export { GT_EXAMPLES };
