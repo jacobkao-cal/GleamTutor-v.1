@@ -1,10 +1,9 @@
 /**
  * The boundary between the UI and whatever produces traces.
  *
- * Phase 1 ships only `demoTracer`, which returns the fixture for the exact
- * demo source and reports everything else as unsupported. Phase 2 can add a
- * real tracer (compile + instrumented run in a Worker) that implements the
- * same interface; the UI does not need to change.
+ * `demoTracer` returns the predefined fixture for the exact demo source and
+ * reports everything else as unsupported. The Phase 2B real tracing engine
+ * (src/tracer/) produces the same TraceResult; see src/tracer/toTraceResult.ts.
  */
 import { DEMO_TRACE } from "./demoTrace";
 import { hashSource } from "./source";
@@ -13,8 +12,17 @@ import { validateTrace } from "./validate";
 
 export type TraceResult =
   | { status: "ok"; trace: ExecutionTrace }
-  | { status: "compile_error"; message: string; location?: SourceLocation }
-  | { status: "unsupported"; message: string };
+  /** `details` is the official compiler's full diagnostic text. */
+  | { status: "compile_error"; message: string; location?: SourceLocation; details?: string }
+  /** `feature` is set when a real tracer names the construct it cannot trace yet. */
+  | { status: "unsupported"; message: string; feature?: string; location?: SourceLocation }
+  /** The program crashed while running. `trace` holds the steps up to the crash, if any. */
+  | { status: "runtime_error"; message: string; trace: ExecutionTrace | null }
+  | { status: "timeout"; message: string }
+  /** A resource limit (steps, call depth, memory, trace size) stopped the run. */
+  | { status: "limit"; message: string }
+  /** A bug in Gleam Tutor itself, not in the student's program. */
+  | { status: "internal_error"; message: string };
 
 export interface Tracer {
   trace(source: string): Promise<TraceResult>;
@@ -36,3 +44,15 @@ export const demoTracer: Tracer = {
     return { status: "ok", trace: DEMO_TRACE };
   },
 };
+
+/**
+ * Uses the predefined Demo trace for the exact demo source and `real` for
+ * everything else, so the fixture is never used for edited code.
+ */
+export function withDemoFixture(real: Tracer): Tracer {
+  return {
+    trace(source) {
+      return hashSource(source) === DEMO_TRACE.sourceHash ? demoTracer.trace(source) : real.trace(source);
+    },
+  };
+}

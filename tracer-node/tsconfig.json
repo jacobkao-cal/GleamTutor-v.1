@@ -1,0 +1,40 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": [
+      "node"
+    ]
+  },
+  "files": [
+    "../src/tracer/events.ts",
+    "../src/tracer/subset.ts",
+    "../src/tracer/instrument.ts",
+    "../src/tracer/normalize.ts",
+    "../src/tracer/runtime.ts",
+    "../src/tracer/traceGleam.ts",
+    "../src/tracer/toTraceResult.ts",
+    "../src/tracer/outcome.ts",
+    "../src/tracer/traceable.ts",
+    "compiler.ts",
+    "runner.ts",
+    "nodeRuntime.ts",
+    "cli.ts",
+    "tests/helpers.ts",
+    "tests/units.test.ts",
+    "tests/trace.test.ts",
+    "tests/engine.test.ts",
+    "tests/sandbox.test.ts",
+    "vitest.config.ts"
+  ]
+}

@@ -2,7 +2,7 @@
 
 **A Python Tutor-style execution visualizer for Gleam, designed for students learning functional programming in UC Berkeley CS 61A.**
 
-> **Project status: Phase 1 UI prototype.** The two-screen Python Tutor-style interface works over one predefined, clearly labelled **Demo trace** for the GT-01 `square(5)` example. There is **no real Gleam execution tracer yet**: any other source (including any edit to the example) is reported as unsupported.
+> **Project status: Phase 2C.** Edited Gleam code is compiled by the official Gleam compiler and run for real **in the browser**, inside a sandboxed iframe, for a small subset: Int, Bool, `let`, arithmetic and comparisons, and calls including recursion. Anything else gets a clear "not supported yet" message with its location. The exact GT-01 `square(5)` example keeps its predefined, clearly labelled **Demo trace**.
 
 ## The idea
 
@@ -85,7 +85,7 @@ See **[PROJECT_SPEC.md](PROJECT_SPEC.md)** for all requirements and acceptance t
 | --- | --- | --- |
 | M0 — Product spec and references | Confirm scope, screenshot fidelity, Gleam semantics | Done |
 | M1 — UI and trace playback | Two screens and fully working navigation over a clearly labeled trace fixture | Prototype done (fixture only) |
-| M2 — Real tracing feasibility | Produce real source-mapped call/binding/return events for a tiny Gleam example | Not started |
+| M2 — Real tracing feasibility | Produce real source-mapped call/binding/return events for a tiny Gleam example | Done for a small subset (Int, Bool, `let`, calls, recursion), running in the browser sandbox ([report](docs/PHASE_2_ARCHITECTURE.md), [engine](tracer-node/README.md)) |
 | M3 — Supported core language | Add recursion, lists, pattern matching with semantic tests | Not started |
 | M4 — Validation and release | Expand coverage, test edge cases, evaluate safe deployment | Not started |
 
@@ -124,13 +124,16 @@ npm run build      # typecheck + production build into dist/
 npm run preview    # serve the production build
 ```
 
+Real tracing needs the pinned compiler: run `npm run tracer:setup` once before `npm run dev` or `npm run build`. `npm run tracer:test` runs the engine tests, and `npm run build && npm run e2e` runs the real-browser tests (needs Google Chrome). See [tracer-node/README.md](tracer-node/README.md).
+
 ### Source layout
 
 | Path | Responsibility |
 | --- | --- |
 | `src/trace/types.ts` | Versioned trace schema (UI-independent) |
 | `src/trace/demoTrace.ts` | The GT-01 **Demo trace** fixture and its exact source |
-| `src/trace/tracer.ts` | `Tracer` interface + `demoTracer` (Phase 2 plugs a real tracer in here) |
+| `src/trace/tracer.ts` | `Tracer` interface, `TraceResult` statuses, `demoTracer`, `withDemoFixture` |
+| `src/tracer/` | Phase 2B real tracing engine (pure; the runtime is injected) |
 | `src/trace/validate.ts`, `source.ts` | Trace validation; source hashing that ties a trace to exact code |
 | `src/playback/playback.ts` | Step index controller (First/Prev/Next/Last/seek) |
 | `src/editor/` | Edit Mode code editor and display-only Gleam highlighter |

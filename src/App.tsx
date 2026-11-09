@@ -8,11 +8,13 @@ import { VisualizeMode } from "./components/VisualizeMode";
 import { findExampleById, findExampleBySource } from "./examples/library";
 import { DEMO_SOURCE } from "./trace/demoTrace";
 import { demoTracer, type Tracer } from "./trace/tracer";
-import type { ExecutionTrace } from "./trace/types";
+import type { ExecutionTrace, SourceLocation } from "./trace/types";
 
 interface Props {
   tracer?: Tracer;
   initialSource?: string;
+  /** True when `tracer` runs real programs (local preview); changes wording only. */
+  realTracing?: boolean;
 }
 
 type View = { mode: "edit" } | { mode: "visualize"; trace: ExecutionTrace; runId: number };
@@ -31,12 +33,19 @@ function hasOwnWork(source: string): boolean {
   return source.trim() !== "" && source !== DEMO_SOURCE && !findExampleBySource(source);
 }
 
-export default function App({ tracer = demoTracer, initialSource = DEMO_SOURCE }: Props) {
+/** Appends "(line L, column C)" when a location is known. */
+function withLocation(message: string, location?: SourceLocation): string {
+  if (!location) return message;
+  return `${message} (line ${location.line}${location.column ? `, column ${location.column}` : ""})`;
+}
+
+export default function App({ tracer = demoTracer, initialSource = DEMO_SOURCE, realTracing = false }: Props) {
   const [source, setSource] = useState(initialSource);
   const [showExitedFrames, setShowExitedFrames] = useState(true);
   const [view, setView] = useState<View>({ mode: "edit" });
   const [error, setError] = useState<string | null>(null);
   const [errorTone, setErrorTone] = useState<"error" | "info">("error");
+  const [errorDetails, setErrorDetails] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const runCounter = useRef(0);
   const latestSource = useRef(source);
@@ -45,6 +54,7 @@ export default function App({ tracer = demoTracer, initialSource = DEMO_SOURCE }
     latestSource.current = s;
     setSource(s);
     setError(null); // an old error must not describe edited code
+    setErrorDetails(null);
   };
 
   const loadExample = (id: string) => {
@@ -59,22 +69,33 @@ export default function App({ tracer = demoTracer, initialSource = DEMO_SOURCE }
   const visualize = async () => {
     setBusy(true);
     setError(null);
+    setErrorDetails(null);
     const requested = source;
     try {
       const result = await tracer.trace(requested);
       // If the code was edited while tracing, the result describes stale code: drop it.
       if (latestSource.current !== requested) return;
-      if (result.status === "ok") {
+      const trace = result.status === "ok" ? result.trace : result.status === "runtime_error" ? result.trace : null;
+      if (trace) {
+        // A runtime error with a partial trace is still visualized; its last step shows the error.
         runCounter.current += 1;
         // A fresh runId remounts the visualizer, so playback restarts at step 1.
-        setView({ mode: "visualize", trace: result.trace, runId: runCounter.current });
-      } else if (result.status === "unsupported" && findExampleBySource(requested)) {
+        setView({ mode: "visualize", trace, runId: runCounter.current });
+      } else if (result.status === "ok") {
+        // unreachable: an ok result always has a trace
+      } else if (result.status === "unsupported" && !result.feature && findExampleBySource(requested)) {
         setErrorTone("info");
         setError(exampleNotTraceableMessage(findExampleBySource(requested)!.title));
+      } else if (result.status === "unsupported") {
+        setErrorTone("info");
+        setError(withLocation(result.message, result.location));
+      } else if (result.status === "compile_error") {
+        setErrorTone("error");
+        setError(withLocation(result.message, result.location));
+        setErrorDetails(result.details ?? null);
       } else {
-        const where = result.status === "compile_error" && result.location ? ` (line ${result.location.line})` : "";
-        setErrorTone(result.status === "compile_error" ? "error" : "info");
-        setError(result.message + where);
+        setErrorTone("error");
+        setError(result.message);
       }
     } finally {
       setBusy(false);
@@ -98,10 +119,12 @@ export default function App({ tracer = demoTracer, initialSource = DEMO_SOURCE }
             onShowExitedFramesChange={setShowExitedFrames}
             onVisualize={visualize}
             onLoadDemo={() => updateSource(DEMO_SOURCE)}
-          onLoadExample={loadExample}
+            onLoadExample={loadExample}
             busy={busy}
             error={error}
-          errorTone={errorTone}
+            errorTone={errorTone}
+            errorDetails={errorDetails}
+            realTracing={realTracing}
           />
         ) : (
           <VisualizeMode

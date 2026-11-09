@@ -8,7 +8,12 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "tracer:setup": "node tracer-node/setup.mjs",
+    "tracer:test": "vitest run --config tracer-node/vitest.config.ts",
+    "tracer:typecheck": "tsc -p tracer-node/tsconfig.json && tsc -p e2e/tsconfig.json",
+    "tracer:trace": "vite-node tracer-node/cli.ts --",
+    "e2e": "vitest run --config e2e/vitest.config.ts"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -19,10 +24,13 @@
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.0.1",
     "@testing-library/user-event": "^14.5.2",
+    "@types/node": "^22.9.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
+    "acorn": "^8.14.0",
     "jsdom": "^25.0.1",
+    "puppeteer-core": "^23.11.1",
     "typescript": "^5.6.3",
     "vite": "^5.4.10",
     "vitest": "^2.1.4"

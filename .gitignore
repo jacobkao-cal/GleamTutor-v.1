@@ -6,3 +6,9 @@ dist
 .env.*
 !.env.example
 *.tsbuildinfo
+
+# Phase 2A POC: downloaded Gleam toolchain (npm run poc:setup)
+tracer-node/.toolchain/
+
+# Browser copies of the toolchain (npm run tracer:setup)
+public/gleam-toolchain/

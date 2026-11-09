@@ -5,6 +5,7 @@
  * the user picks an option (never while typing) and never runs anything.
  */
 import { findExampleBySource, groupExamples } from "../examples/library";
+import { looksTraceable } from "../tracer/traceable";
 
 interface Props {
   source: string;
@@ -12,6 +13,9 @@ interface Props {
 }
 
 const GROUPS = groupExamples();
+/** Computed from each example's code with the tracer's own subset check; never hard-coded. */
+const TRACEABLE = new Set(GROUPS.flatMap((g) => g.examples).filter((ex) => looksTraceable(ex.code)).map((ex) => ex.id));
+export const TRACEABLE_SUFFIX = " (step-through)";
 
 export function ExamplePicker({ source, onPick }: Props) {
   const selected = findExampleBySource(source)?.id ?? "";
@@ -32,6 +36,7 @@ export function ExamplePicker({ source, onPick }: Props) {
           {g.examples.map((ex) => (
             <option key={ex.id} value={ex.id}>
               {ex.title}
+              {TRACEABLE.has(ex.id) ? TRACEABLE_SUFFIX : ""}
             </option>
           ))}
         </optgroup>

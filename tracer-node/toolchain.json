@@ -1,0 +1,18 @@
+{
+  "gleamVersion": "1.19.2",
+  "compiler": {
+    "url": "https://github.com/gleam-lang/gleam/releases/download/v1.19.2/gleam-v1.19.2-browser.tar.gz",
+    "sha256": "9d5ac30e0d00ef9627b3adcd9f75abb55ec54c718a1d09c4c60649edaf1462b9",
+    "license": "Apache-2.0"
+  },
+  "prelude": {
+    "url": "https://raw.githubusercontent.com/gleam-lang/gleam/v1.19.2/compiler-core/templates/prelude.mjs",
+    "sha256": "90bdfff5f22caa4e0df1f831e0f754eb31d1425230a4f3725e5a5be846aef9ee",
+    "license": "Apache-2.0"
+  },
+  "browserFiles": {
+    "gleam_wasm.js": "583130200462e34bcc4ce86b29cfc30077770aa03d44f1cd4f3073a43cf60117",
+    "gleam_wasm_bg.wasm": "9f86f133b7835b125f9d2250b4759431f5c53cc45fd8922857f1f15723abf902",
+    "gleam_prelude.mjs": "90bdfff5f22caa4e0df1f831e0f754eb31d1425230a4f3725e5a5be846aef9ee"
+  }
+}
