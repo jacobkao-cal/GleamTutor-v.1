@@ -9,6 +9,7 @@ import { MAX_RECORDED_STRING_CHARS, MAX_STRING_VALUE, type RawEvent, type RawLoc
 const MAX_TEXT = 100_000;
 const MAX_NAME = 200;
 const MAX_ARGS = 255;
+const MAX_KEY = 210_000;
 
 const isInt = (x: unknown): x is number => typeof x === "number" && Number.isInteger(x);
 const isText = (x: unknown, max = MAX_TEXT): x is string => typeof x === "string" && x.length <= max;
@@ -24,6 +25,7 @@ function isValue(x: unknown): x is RawValue {
   if (v.kind === "bool") return typeof v.value === "boolean";
   if (v.kind === "string") return isText(v.value, MAX_STRING_VALUE);
   if (v.kind === "nil") return true;
+  if (v.kind === "list") return v.node === null || (isInt(v.node) && v.node >= 1);
   if (v.kind === "unsupported") return isText(v.jsType, MAX_NAME);
   return false;
 }
@@ -31,11 +33,15 @@ function isValue(x: unknown): x is RawValue {
 function isEvent(x: unknown, limits: RunLimits): x is RawEvent {
   const e = x as RawEvent;
   if (e && typeof e === "object" && e.t === "out") return isText(e.text, limits.maxStdout);
+  if (e && typeof e === "object" && e.t === "node") return isInt(e.id) && e.id >= 1 && isValue(e.head) && (e.tail === null || (isInt(e.tail) && e.tail >= 1));
+  if (e && typeof e === "object" && e.t === "close") return isInt(e.frame) && e.frame >= 1 && isInt(e.caseId);
+  if (e && typeof e === "object" && e.t === "open") return isInt(e.frame) && e.frame >= 1 && isInt(e.scopeId);
   if (!e || typeof e !== "object" || !isInt(e.frame) || e.frame < 1 || !isLoc(e.loc)) return false;
   switch (e.t) {
     case "call":
       return (
         isText(e.fn, MAX_NAME) &&
+        (e.tail === undefined || e.tail === true) &&
         Array.isArray(e.args) &&
         e.args.length <= MAX_ARGS &&
         e.args.every((a) => Array.isArray(a) && a.length === 2 && isText(a[0], MAX_NAME) && isValue(a[1]))
@@ -43,6 +49,13 @@ function isEvent(x: unknown, limits: RunLimits): x is RawEvent {
     case "line":
     case "done":
       return true;
+    case "match":
+      return (
+        isInt(e.caseId) &&
+        Array.isArray(e.binds) &&
+        e.binds.length <= MAX_ARGS &&
+        e.binds.every((a) => Array.isArray(a) && a.length === 2 && isText(a[0], MAX_NAME) && isValue(a[1]))
+      );
     case "bind":
       return isText(e.name, MAX_NAME) && isValue(e.value);
     case "return":
@@ -65,6 +78,8 @@ function isEvents(x: unknown, limits: RunLimits): x is RawEvent[] {
     if (e.t === "out") printed += e.text.length;
     else if (e.t === "bind" || e.t === "return") count(e.value);
     else if (e.t === "call") e.args.forEach(([, v]) => count(v));
+    else if (e.t === "match") e.binds.forEach(([, v]) => count(v));
+    else if (e.t === "node") count(e.head);
   }
   return printed <= limits.maxStdout && stringChars <= MAX_RECORDED_STRING_CHARS;
 }
@@ -77,10 +92,19 @@ export function validateRunOutcome(x: unknown, limits: RunLimits): RunOutcome | 
     case "ok":
       return isEvents(o.events, limits) &&
         isValue(o.result) &&
-        isValue(o.baselineResult) &&
+        isText(o.resultKey, MAX_KEY) &&
+        isText(o.baselineKey, MAX_KEY) &&
         isText(o.stdout, limits.maxStdout) &&
         isText(o.baselineStdout, limits.maxStdout + MAX_TEXT)
-        ? { status: "ok", events: o.events, result: o.result, baselineResult: o.baselineResult, stdout: o.stdout, baselineStdout: o.baselineStdout }
+        ? {
+            status: "ok",
+            events: o.events,
+            result: o.result,
+            resultKey: o.resultKey,
+            baselineKey: o.baselineKey,
+            stdout: o.stdout,
+            baselineStdout: o.baselineStdout,
+          }
         : null;
     case "runtime_error":
       return isEvents(o.events, limits) && isText(o.message) && isText(o.stdout, limits.maxStdout)

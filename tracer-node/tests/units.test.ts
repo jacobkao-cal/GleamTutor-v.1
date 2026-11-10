@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { parseDiagnostic } from "../../src/tracer/runtime";
 import { clampLimits, DEFAULT_LIMITS, MAX_LIMITS, type RawEvent } from "../../src/tracer/events";
-import { AlignmentError, gleamNameOf, instrument } from "../../src/tracer/instrument";
+import { instrumentSource } from "../../src/tracer/instrument";
 import { mergeEvents, normalize, NormalizeLimitError } from "../../src/tracer/normalize";
 import { runInWorker } from "../runner";
 import type { ProgramFiles } from "../../src/tracer/link";
@@ -51,10 +51,14 @@ describe("subset recogniser", () => {
   it.each([
     [`pub fn main() {\n  let x = 1\n}\n`, "A function body that ends with a let (it needs a final expression)"],
     [`fn f(x: Float) -> Int {\n  1\n}\npub fn main() {\n  1\n}\n`, "The type Float"],
-    [`pub fn main() {\n  let _x = 1\n  2\n}\n`, "Discard names (starting with _)"],
+    [`pub fn main() {\n  let _x = 1\n  _x\n}\n`, "Discard names (starting with _)"],
+    [`pub fn main() {\n  let #(a, b) = #(1, 2)\n  a\n}\n`, "Tuples"],
+    [`pub fn main() {\n  case 1 {\n    1 | 2 -> 0\n    _ -> 1\n  }\n}\n`, "Alternative patterns"],
+    [`pub fn main() {\n  case "ab" {\n    "a" <> rest -> rest\n    _ -> ""\n  }\n}\n`, 'String prefix patterns ("a" <> rest)'],
+    [`pub fn main() {\n  let gleam_tutor_x = 1\n  gleam_tutor_x\n}\n`, "Names starting with gleam_tutor (reserved by Gleam Tutor)"],
     [`fn f(label x: Int) -> Int {\n  x\n}\npub fn main() {\n  1\n}\n`, "Labelled parameters"],
     [`fn f(x: Int) -> Int {\n  x\n}\npub fn main() {\n  f(x: 1)\n}\n`, "Labelled arguments"],
-    [`fn f(x: List(Int)) -> Int {\n  1\n}\npub fn main() {\n  1\n}\n`, "The type List"],
+    [`fn f(x: Result(Int, Nil)) -> Int {\n  1\n}\npub fn main() {\n  1\n}\n`, "The type Result"],
     [`fn helper() -> Int {\n  1\n}\n`, "Programs without `pub fn main()`"],
   ])("rejects %j", (src, feature) => {
     expect(() => parseSubset(src)).toThrow(UnsupportedError);
@@ -66,32 +70,37 @@ describe("subset recogniser", () => {
   });
 });
 
-describe("instrumentation alignment", () => {
-  it("maps compiler-escaped names back to Gleam names", () => {
-    expect(gleamNameOf("x$1")).toBe("x");
-    expect(gleamNameOf("class$")).toBe("class");
-    expect(gleamNameOf("this$2")).toBe("this");
-    expect(gleamNameOf("total")).toBe("total");
+describe("source instrumentation", () => {
+  const FIRST = `pub fn first(xs: List(Int)) -> Int {\n  case xs {\n    [] -> 0\n    [head, ..tail] -> head\n  }\n}\n\npub fn main() {\n  let a = first([3, 4])\n  a\n}\n`;
+
+  it("records the regions to wrap: function bodies, statements, the final expression, cases and clauses", () => {
+    const m = parseSubset(FIRST);
+    const first = m.functions[0].region;
+    expect(first.children.map((r) => r.kind)).toEqual(["tail"]);
+    const kase = first.children[0].children[0];
+    expect(kase).toMatchObject({ kind: "case", caseId: 1, loc: { line: 2, column: 3, endLine: 5, endColumn: 4 } });
+    expect(kase.children.map((c) => [c.kind, c.vars, c.loc.line])).toEqual([
+      ["clause", [], 3],
+      ["clause", ["head", "tail"], 4],
+    ]);
+    expect(m.functions[1].region.children.map((r) => [r.kind, r.name])).toEqual([
+      ["let", "a"],
+      ["tail", undefined],
+    ]);
   });
 
-  const module = parseSubset(SQUARE);
-  const good = `export function square(x) {\n  return x * x;\n}\n\nexport function main() {\n  let a = 5;\n  let b = square(a);\n  return b;\n}\n`;
-
-  it("instruments matching compiled code without changing its expressions", () => {
-    const out = instrument(good, module);
-    expect(out).toContain("let a = 5;");
-    expect(out).toContain("let b = square(a);");
-    expect(out).toContain('$__gt.call("square", [1, 1, 1, 31], [["x", x]])');
-  });
-
-  it.each([
-    ["an extra statement", good.replace("let a = 5;", "let a = 5; let t = 1;")],
-    ["a renamed binding", good.replace(/\ba\b/g, "z")],
-    ["a loop", good.replace("return x * x;", "while (true) { return x * x; }")],
-    ["a missing function", good.replace(/export function square[\s\S]*?\n}\n/, "")],
-    ["an unexpected import", `import * as $evil from "../evil.mjs";\n` + good],
-  ])("refuses compiled code with %s", (_, js) => {
-    expect(() => instrument(js, module)).toThrow(AlignmentError);
+  it("keeps the student's code and adds only probes that observe it", () => {
+    const out = instrumentSource(FIRST, parseSubset(FIRST));
+    // Every original token is still there, in order.
+    const stripped = out.replace(/gleam_tutor_[a-z]+\([^()]*(\([^()]*\))?[^()]*\)?/g, "");
+    for (const piece of ["case xs {", "[] ->", "[head, ..tail] ->", "first([3, 4])"]) expect(out).toContain(piece);
+    expect(stripped.length).toBeLessThan(out.length);
+    expect(out).toContain('gleam_tutor_enter("first", 1, 1, 1, 37)');
+    expect(out).toContain('gleam_tutor_arg(gleam_tutor_frame, "xs", xs)');
+    expect(out).toContain("gleam_tutor_match(gleam_tutor_frame, 1, 4, 5, 4, 22)");
+    expect(out).toContain('gleam_tutor_pvar(gleam_tutor_frame, "tail", tail)');
+    expect(out).toContain('gleam_tutor_bind(gleam_tutor_frame, "a", a, 9, 3, 9, 24)');
+    expect(out).toContain('@external(javascript, "./gleam_tutor_trace.mjs", "ret")');
   });
 });
 

@@ -1,141 +1,160 @@
 /**
- * Instruments the JavaScript produced by the official Gleam compiler.
+ * Source-level instrumentation (Phase 3A).
  *
- * Each compiled function is first ALIGNED with the subset recogniser's view of
- * the Gleam source: same functions, same parameters, the same statements
- * (`let` bindings and expression statements) in the same order, then one `return`. Any difference (an unexpected compiled
- * shape, a temporary, a loop, a branch) makes the program unsupported; we never
- * guess a mapping.
+ * The program is instrumented in GLEAM, then compiled by the official
+ * compiler like any other program. Each region the recogniser recorded
+ * (subset.ts) is wrapped with calls to "probe" functions, declared at the end
+ * of the module as typed @external functions:
  *
- * Then recording calls are spliced in. They only observe values that the
- * compiled program computes; they never compute values themselves.
+ *   fn body      let gleam_tutor_frame = gleam_tutor_enter("f", loc) + one gleam_tutor_arg per parameter
+ *   let x = e    gleam_tutor_line(...)  let x = e  gleam_tutor_bind(..., "x", x, ...)
+ *   e (stmt)     gleam_tutor_line(...)  e  gleam_tutor_done(...)
+ *   final e      gleam_tutor_line(...)  gleam_tutor_ret(..., e)
+ *   case ...     gleam_tutor_close(..., id, case ...)
+ *   p -> body    p -> { gleam_tutor_match(..., id, loc)  gleam_tutor_pvar(..., "v", v)...  body }
+ *   { ... }      gleam_tutor_close(..., id, { gleam_tutor_open(..., id)  { ... } })
+ *   f(a, b)      f(a, gleam_tutor_tail(..., "f", b))   for a self tail call in a function the
+ *                compiler turned into a loop (marks the next call as a logical tail-call frame)
+ *
+ * Why the source and not the compiled JavaScript: the compiler turns `case`
+ * into a decision tree that reorders clauses, merges or rewrites clause
+ * bodies, and turns self tail calls into loops, so compiled branches cannot
+ * be mapped back to clauses reliably. A probe inside a clause body runs
+ * exactly when that clause is selected, however the tree is arranged.
+ *
+ * Every probe is an identity or a Nil-returning observer: `ret` and `close`
+ * return their argument unchanged, so the program computes the same values.
+ * The pipeline checks this on every run: the instrumented program's result
+ * and output must equal the uninstrumented program's.
+ *
+ * Locations are passed as Int literals taken from the ORIGINAL source, so
+ * the inserted text never shifts what the trace reports.
  */
-import { parse } from "acorn";
-import type { Loc, SubsetFunction, SubsetModule } from "./subset";
+import type { Loc, Region, SubsetModule } from "./subset";
 
-export class AlignmentError extends Error {}
+/** The module the probe externals come from; link.ts supplies it. */
+export const TRACE_MODULE_SPECIFIER = "./gleam_tutor_trace.mjs";
 
-/** Name of the per-run recorder; `$__` identifiers cannot come from Gleam source. */
-export const RECORDER = "$__gt";
-const FRAME = "$__frame";
-export const RECORDER_SYMBOL = "gleam-tutor.tracer";
+const FRAME = "gleam_tutor_frame";
 
-// Minimal ESTree shapes used here (acorn returns these at runtime).
-interface Node {
-  type: string;
-  start: number;
-  end: number;
+export interface InstrumentOptions {
+  /**
+   * Functions the official compiler turned into loops (self tail calls). Only
+   * their tail call sites are marked, so a frame is labelled a tail call only
+   * when the compiled program really reuses the caller's frame.
+   */
+  loopFunctions?: Set<string>;
 }
-interface Identifier extends Node {
-  name: string;
+const loc = (l: Loc) => `${l.line}, ${l.column}, ${l.endLine}, ${l.endColumn}`;
+const str = (s: string) => JSON.stringify(s); // Gleam string literal for an identifier (ASCII only)
+
+function prefix(r: Region, o: InstrumentOptions): string {
+  switch (r.kind) {
+    case "fnbody":
+      return (
+        `\n  let ${FRAME} = gleam_tutor_enter(${str(r.name!)}, ${loc(r.loc)})\n` +
+        (r.vars ?? []).map((v) => `  gleam_tutor_arg(${FRAME}, ${str(v)}, ${v})\n`).join("")
+      );
+    case "let":
+    case "expr":
+      return `gleam_tutor_line(${FRAME}, ${loc(r.loc)})\n  `;
+    case "tail":
+      return `gleam_tutor_line(${FRAME}, ${loc(r.loc)})\n  gleam_tutor_ret(${FRAME}, ${loc(r.loc)}, `;
+    case "case":
+      return `gleam_tutor_close(${FRAME}, ${r.caseId}, `;
+    case "clause":
+      return (
+        `{\n gleam_tutor_match(${FRAME}, ${r.caseId}, ${loc(r.loc)})\n` +
+        (r.vars ?? []).map((v) => ` gleam_tutor_pvar(${FRAME}, ${str(v)}, ${v})\n`).join("")
+      );
+    case "block":
+      return `gleam_tutor_close(${FRAME}, ${r.caseId}, {\n gleam_tutor_open(${FRAME}, ${r.caseId})\n`;
+    case "tailarg":
+      return o.loopFunctions?.has(r.name!) ? `gleam_tutor_tail(${FRAME}, ${str(r.name!)}, ` : "";
+    case "tailcall0":
+      return o.loopFunctions?.has(r.name!) ? `{\n gleam_tutor_tail(${FRAME}, ${str(r.name!)}, Nil)\n` : "";
+    case "plain":
+      return "";
+  }
 }
-interface FunctionDeclaration extends Node {
-  id: Identifier;
-  params: Node[];
-  body: Node & { body: Node[] };
+
+function suffix(r: Region, o: InstrumentOptions): string {
+  switch (r.kind) {
+    case "let":
+      return r.name ? `\n  gleam_tutor_bind(${FRAME}, ${str(r.name)}, ${r.name}, ${loc(r.loc)})` : `\n  gleam_tutor_done(${FRAME}, ${loc(r.loc)})`;
+    case "expr":
+      return `\n  gleam_tutor_done(${FRAME}, ${loc(r.loc)})`;
+    case "tail":
+    case "case":
+      return ")";
+    case "clause":
+      return "\n}";
+    case "block":
+      return "\n})";
+    case "tailarg":
+      return o.loopFunctions?.has(r.name!) ? ")" : "";
+    case "tailcall0":
+      return o.loopFunctions?.has(r.name!) ? "\n}" : "";
+    default:
+      return "";
+  }
 }
-interface VariableDeclaration extends Node {
-  kind: string;
-  declarations: (Node & { id: Node; init: Node | null })[];
+
+function render(source: string, regions: Region[], start: number, end: number, o: InstrumentOptions): string {
+  let out = "";
+  let at = start;
+  for (const r of regions) {
+    out += source.slice(at, r.start) + prefix(r, o) + render(source, r.children, r.start, r.end, o) + suffix(r, o);
+    at = r.end;
+  }
+  return out + source.slice(at, end);
 }
-interface ReturnStatement extends Node {
-  argument: Node | null;
+
+/** The probe functions, appended to the instrumented module. */
+const EXTERNALS = `
+
+// ---- Gleam Tutor probes (added by the tracer; not part of the student's program) ----
+@external(javascript, "${TRACE_MODULE_SPECIFIER}", "enter")
+fn gleam_tutor_enter(name: String, l: Int, c: Int, el: Int, ec: Int) -> Int
+@external(javascript, "${TRACE_MODULE_SPECIFIER}", "arg")
+fn gleam_tutor_arg(frame: Int, name: String, value: a) -> Nil
+@external(javascript, "${TRACE_MODULE_SPECIFIER}", "line")
+fn gleam_tutor_line(frame: Int, l: Int, c: Int, el: Int, ec: Int) -> Nil
+@external(javascript, "${TRACE_MODULE_SPECIFIER}", "bind")
+fn gleam_tutor_bind(frame: Int, name: String, value: a, l: Int, c: Int, el: Int, ec: Int) -> Nil
+@external(javascript, "${TRACE_MODULE_SPECIFIER}", "done")
+fn gleam_tutor_done(frame: Int, l: Int, c: Int, el: Int, ec: Int) -> Nil
+@external(javascript, "${TRACE_MODULE_SPECIFIER}", "ret")
+fn gleam_tutor_ret(frame: Int, l: Int, c: Int, el: Int, ec: Int, value: a) -> a
+@external(javascript, "${TRACE_MODULE_SPECIFIER}", "match")
+fn gleam_tutor_match(frame: Int, case_id: Int, l: Int, c: Int, el: Int, ec: Int) -> Nil
+@external(javascript, "${TRACE_MODULE_SPECIFIER}", "pvar")
+fn gleam_tutor_pvar(frame: Int, name: String, value: a) -> Nil
+@external(javascript, "${TRACE_MODULE_SPECIFIER}", "close")
+fn gleam_tutor_close(frame: Int, case_id: Int, value: a) -> a
+@external(javascript, "${TRACE_MODULE_SPECIFIER}", "open")
+fn gleam_tutor_open(frame: Int, scope_id: Int) -> Nil
+@external(javascript, "${TRACE_MODULE_SPECIFIER}", "tail")
+fn gleam_tutor_tail(frame: Int, callee: String, value: a) -> a
+`;
+
+/** The instrumented Gleam source for a program the recogniser accepted. */
+export function instrumentSource(source: string, module: SubsetModule, options: InstrumentOptions = {}): string {
+  const regions = module.functions.map((f) => f.region);
+  return render(source, regions, 0, source.length, options) + EXTERNALS;
 }
 
 /**
- * Maps a compiler-generated identifier back to its Gleam name. The compiler
- * appends `$` to JS reserved words (`class` -> `class$`) and `$N` to shadowed
- * names (`x` -> `x$1`).
+ * Names of the functions the official compiler compiled to a loop: their
+ * parameters are renamed `loop$...` and the body is a `while (true)` loop.
+ * Read from the uninstrumented compiled JavaScript.
  */
-export function gleamNameOf(jsName: string): string {
-  return jsName.replace(/\$\d+$/, "").replace(/\$$/, "");
-}
-
-const locLiteral = (l: Loc) => `[${l.line}, ${l.column}, ${l.endLine}, ${l.endColumn}]`;
-
-interface Edit {
-  at: number;
-  text: string;
-}
-
-export function instrument(js: string, module: SubsetModule): string {
-  const program = parse(js, { ecmaVersion: "latest", sourceType: "module" }) as unknown as Node & { body: Node[] };
-  const edits: Edit[] = [];
-  const seen = new Set<string>();
-
-  for (const stmt of program.body) {
-    if (stmt.type === "ImportDeclaration") {
-      // Prelude and stdlib imports; linkProgram (stdlib.ts) checks them against the stdlib.
-      const src = (stmt as Node & { source: { value: string } }).source.value;
-      if (src !== "./gleam.mjs" && !/^\.\/gleam\/[a-z0-9_/]+\.mjs$/.test(src)) throw new AlignmentError(`unexpected import of ${src}`);
-      continue;
-    }
-    const decl = (stmt.type === "ExportNamedDeclaration" ? (stmt as Node & { declaration: Node | null }).declaration : stmt) as Node | null;
-    if (!decl || decl.type !== "FunctionDeclaration") {
-      throw new AlignmentError(`unexpected top-level ${decl?.type ?? stmt.type}`);
-    }
-    const fnNode = decl as FunctionDeclaration;
-    const name = gleamNameOf(fnNode.id.name);
-    const fn = module.functions.find((f) => f.name === name);
-    if (!fn) throw new AlignmentError(`compiled function ${fnNode.id.name} has no source counterpart`);
-    if (seen.has(name)) throw new AlignmentError(`duplicate function ${name}`);
-    seen.add(name);
-    edits.push(...instrumentFunction(fnNode, fn));
+export function loopFunctionsIn(compiledJs: string): Set<string> {
+  const out = new Set<string>();
+  const re = /function ([A-Za-z_][\w]*\$?)\(([^)]*)\)\s*\{\s*while \(true\) \{/g;
+  for (let m = re.exec(compiledJs); m; m = re.exec(compiledJs)) {
+    const params = m[2].split(",").map((x) => x.trim()).filter(Boolean);
+    if (params.every((x) => x.startsWith("loop$"))) out.add(m[1].replace(/\$$/, ""));
   }
-  for (const f of module.functions) {
-    if (!seen.has(f.name)) throw new AlignmentError(`source function ${f.name} is missing from compiled output`);
-  }
-
-  let out = js;
-  for (const e of edits.sort((a, b) => b.at - a.at)) out = out.slice(0, e.at) + e.text + out.slice(e.at);
-  return `const ${RECORDER} = globalThis[Symbol.for(${JSON.stringify(RECORDER_SYMBOL)})];\n` + out;
-}
-
-function instrumentFunction(node: FunctionDeclaration, fn: SubsetFunction): Edit[] {
-  const params = node.params.map((p) => {
-    if (p.type !== "Identifier") throw new AlignmentError(`${fn.name}: non-identifier parameter`);
-    return (p as Identifier).name;
-  });
-  if (params.length !== fn.params.length || params.some((p, i) => gleamNameOf(p) !== fn.params[i])) {
-    throw new AlignmentError(`${fn.name}: parameters differ from source`);
-  }
-
-  const body = node.body.body;
-  if (body.length !== fn.body.length + 1) {
-    throw new AlignmentError(`${fn.name}: compiled body has ${body.length} statements, expected ${fn.body.length + 1}`);
-  }
-  const edits: Edit[] = [];
-  const args = params.map((p, i) => `[${JSON.stringify(fn.params[i])}, ${p}]`).join(", ");
-  edits.push({
-    at: node.body.start + 1,
-    text: ` const ${FRAME} = ${RECORDER}.call(${JSON.stringify(fn.name)}, ${locLiteral(fn.header)}, [${args}]);`,
-  });
-
-  fn.body.forEach((stmt, i) => {
-    if (stmt.kind === "expr") {
-      // An expression evaluated for its effect, e.g. io.println(x).
-      const e = body[i];
-      if (e.type !== "ExpressionStatement") throw new AlignmentError(`${fn.name}: statement ${i + 1} is not an expression statement`);
-      edits.push({ at: e.start, text: `${RECORDER}.line(${FRAME}, ${locLiteral(stmt.loc)}); ` });
-      edits.push({ at: e.end, text: ` ${RECORDER}.done(${FRAME}, ${locLiteral(stmt.loc)});` });
-      return;
-    }
-    const letStmt = stmt;
-    const s = body[i] as VariableDeclaration;
-    const d = s.type === "VariableDeclaration" && s.kind === "let" && s.declarations.length === 1 ? s.declarations[0] : null;
-    if (!d || d.id.type !== "Identifier" || !d.init) throw new AlignmentError(`${fn.name}: statement ${i + 1} is not a simple let`);
-    const jsName = (d.id as Identifier).name;
-    if (gleamNameOf(jsName) !== letStmt.name) {
-      throw new AlignmentError(`${fn.name}: compiled let ${jsName} does not match source let ${letStmt.name}`);
-    }
-    edits.push({ at: s.start, text: `${RECORDER}.line(${FRAME}, ${locLiteral(letStmt.loc)}); ` });
-    edits.push({ at: s.end, text: ` ${RECORDER}.bind(${FRAME}, ${JSON.stringify(letStmt.name)}, ${jsName}, ${locLiteral(letStmt.loc)});` });
-  });
-
-  const ret = body[body.length - 1] as ReturnStatement;
-  if (ret.type !== "ReturnStatement" || !ret.argument) throw new AlignmentError(`${fn.name}: last statement is not a return`);
-  edits.push({ at: ret.start, text: `${RECORDER}.line(${FRAME}, ${locLiteral(fn.tail.loc)}); ` });
-  edits.push({ at: ret.argument.start, text: `${RECORDER}.ret(${FRAME}, (` });
-  edits.push({ at: ret.argument.end, text: `), ${locLiteral(fn.tail.loc)})` });
-  return edits;
+  return out;
 }

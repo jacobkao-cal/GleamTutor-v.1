@@ -42,13 +42,14 @@ If `tracer:setup` has not been run, the app still works. The Demo trace still pl
 
 ### Which stdlib calls can be traced
 
-A call `module.fn(...)` is traceable when `fn` is public and its declared result type is exactly `Int`, `Bool`, `String` or `Nil`. This is derived automatically from the stdlib sources; there is no hand-made list. It covers, for example:
-- `io.println` and `io.print`;
-- `int.to_string`, `int.max` and `int.absolute_value`;
-- `string.uppercase`, `string.length`, `string.repeat` and `string.replace`;
-- `bool.to_string`.
+A call `module.fn(...)` (or `fn(...)` when imported unqualified) is traceable when `fn` is public and its declared result type is displayable: `Int`, `Bool`, `String`, `Nil`, `List(...)` of those, or a type variable. The rule is derived automatically from the stdlib sources (`isDisplayableType` in `src/tracer/stdlib.ts`); there is no hand-made list.
 
-Results of type `Float` or a generic type (`a`) are refused, because Int and Float are both JS numbers at run time and the display would be wrong. So are results such as `List`, `Result`, `Option` and `Dict`, which can't be drawn yet. `int.random` is refused because it gives a different result on each run, which would break the check that compares the instrumented and uninstrumented runs.
+- **Coverage:** 161 of 353 public functions (164 have a displayable result type; 3 of those are random), including `list.reverse`, `list.append`, `list.take`, `int.to_string`, `int.sum`, `string.split` and `string.join`.
+- **Why type variables are safe:** a generic function can only return what came in through its arguments, and every value a traced program can make is displayable.
+- **Refused:**
+  - `Float`, `Result`, `Option`, `Dict` and tuple results;
+  - higher-order calls (a function as an argument);
+  - `int.random`, `float.random`, `list.shuffle` and `list.sample` (results differ on every run).
 
 ### Print Output
 
@@ -104,30 +105,40 @@ normalize + validateTrace in the page
 | `tracer-node/nodeRuntime.ts` | `TracerRuntime` for Node (`compiler.ts` + `compile-worker.mjs`, `runner.ts` + `worker.mjs`) |
 | `e2e/browser.e2e.test.ts` | Real-browser end-to-end and sandbox-boundary tests |
 
-## Supported subset
+## Supported subset (Phase 3C)
 
-- **Imports:** `import gleam/<module>` for any `gleam_stdlib` module. Unqualified imports (`.{...}`) and aliases (`as`) aren't supported yet.
+- **Imports:** any `gleam_stdlib` module, written as `import gleam/x`, `import gleam/x as y` or `import gleam/x.{f, f as g, type T}`. Unqualified functions are called by name.
 - **Top level:** imports, then function definitions (`pub` optional). Requires `pub fn main()` with no parameters.
-- **Types** (annotations optional): `Int`, `Bool`, `String`, `Nil`.
-- **Function body:** statements, then one final expression, which is the function's value. A statement is either `let name = expr` or an expression evaluated for its effect, such as `io.println(x)`.
+- **Types** (annotations optional): `Int`, `Bool`, `String`, `Nil`, `List(...)`, and type variables.
+- **Function body:** statements, then one final expression. A statement is `let name = expr`, `let _ = expr`, or an expression evaluated for its effect (`io.println(x)`).
 - **Expressions:**
-  - literals: Int, `True`/`False`, `Nil`, and String, including escapes, Unicode and multi-line strings;
+  - literals: Int, `True`/`False`, `Nil`, String;
   - variables;
   - calls to this module's functions;
-  - calls to traceable stdlib functions (see above);
+  - calls to traceable stdlib functions;
+  - list literals `[1, 2]`, `[0, ..xs]`, `[]`;
+  - `case` expressions;
+  - blocks `{ ... }`, anywhere an expression is, with their own scope;
   - `-x`, `!b`, `<>`, `+ - * / %`, `== != < > <= >=`, `&& ||`.
-- **Also works:** shadowing, nested calls, and recursion that is not a tail call.
+- **`case`:**
+  - one or more subjects;
+  - clauses with an optional guard (`if`);
+  - expression or block bodies;
+  - patterns: literals, variables, `_` discards, and list patterns (`[]`, `[a, b]`, `[a, ..rest]`, `[a, ..]`, nested).
+- **Also works:** shadowing, nested calls, recursion. A self tail call that the compiler turned into a loop is drawn as a **logical frame** labelled "tail call" (`loopFunctionsIn`, `gleam_tutor_tail`).
 
 Everything else is refused with a located, plain-language message. That includes:
-- `case` and blocks;
+- alternative and string-prefix patterns, tuple and constructor patterns;
+- `let` destructuring;
 - anonymous functions and function captures;
-- floats, lists, tuples and custom types;
+- floats, tuples and custom types;
 - labelled arguments;
 - `let assert`, `panic`, `todo`, `echo` and `use`;
-- pipelines;
-- self tail calls, which the compiler turns into loops.
+- pipelines.
 
-The refusal names the first construct the parser can't handle. See `docs/PHASE_2D_COMPATIBILITY.md` for every library example.
+Stdlib calls whose result type can't be shown (`Float`, `Result`, `Option`, `Dict`, ...) are refused with a reason, as are higher-order calls and random functions.
+
+**How it is traced:** the program is instrumented at the Gleam source level, then compiled again by the official compiler (`src/tracer/instrument.ts`; the reasons are in `docs/PHASE_2_ARCHITECTURE.md` §14). See `docs/PHASE_2D_COMPATIBILITY.md` for every library example.
 
 ## Results
 

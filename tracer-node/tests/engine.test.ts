@@ -140,8 +140,8 @@ describe("error taxonomy, end to end", () => {
   });
 
   it("unsupported construct, after the compiler accepted it", async () => {
-    const r = await traceGleam("pub fn main() {\n  case 1 {\n    _ -> 2\n  }\n}\n");
-    expect(r).toMatchObject({ status: "unsupported", feature: "case expressions", line: 2, column: 3 });
+    const r = await traceGleam("pub fn main() {\n  let pair = #(1, 2)\n  1\n}\n");
+    expect(r).toMatchObject({ status: "unsupported", feature: "Tuples", line: 2, column: 14 });
   });
 
   it("runaway recursion stops at the call-depth limit", async () => {
@@ -201,7 +201,8 @@ describe("error taxonomy, end to end", () => {
         stdout: "",
         baselineStdout: "",
         result: { kind: "int", value: "7" },
-        baselineResult: { kind: "int", value: "6" },
+        resultKey: "7",
+        baselineKey: "6",
       })),
     );
     expect(r.status).toBe("internal_error");
@@ -216,7 +217,8 @@ describe("error taxonomy, end to end", () => {
         stdout: "a\n",
         baselineStdout: "b\n",
         result: { kind: "int", value: "6" },
-        baselineResult: { kind: "int", value: "6" },
+        resultKey: "6",
+        baselineKey: "6",
       })),
     );
     expect(r).toEqual({ status: "internal_error", message: "The instrumented program printed different output from the uninstrumented one" });
@@ -237,9 +239,9 @@ describe("UI-facing results (toTraceResult)", () => {
   });
 
   it("unsupported features are named in plain words, with their location", async () => {
-    const r = toTraceResult(await traceGleam("pub fn main() {\n  case 1 {\n    _ -> 2\n  }\n}\n"));
-    expect(r).toMatchObject({ status: "unsupported", feature: "case expressions", location: { line: 2, column: 3 } });
-    expect(r.status === "unsupported" && r.message).toMatch(/^Step-by-step tracing doesn't support case expressions yet\./);
+    const r = toTraceResult(await traceGleam("pub fn main() {\n  let pair = #(1, 2)\n  1\n}\n"));
+    expect(r).toMatchObject({ status: "unsupported", feature: "Tuples", location: { line: 2, column: 14 } });
+    expect(r.status === "unsupported" && r.message).toMatch(/^Step-by-step tracing doesn't support tuples yet\./);
   });
 
   it("ok results carry only the trace (no compiled JS or raw events)", async () => {

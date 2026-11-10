@@ -19,7 +19,8 @@ const okOutcome = {
   status: "ok",
   events: [call, ret],
   result: { kind: "int", value: "6" },
-  baselineResult: { kind: "int", value: "6" },
+  resultKey: "6",
+  baselineKey: "6",
   stdout: "",
   baselineStdout: "",
 };
@@ -31,7 +32,7 @@ describe("validateRunOutcome (sandbox replies are untrusted)", () => {
 
   it("accepts a real outcome produced by the shared recorder", async () => {
     const r = expectOk(await traceGleam("fn sq(x: Int) -> Int {\n  x * x\n}\n\npub fn main() {\n  sq(3)\n}\n"));
-    const outcome = { status: "ok", events: r.events, result: r.result, baselineResult: r.result, stdout: "", baselineStdout: "" };
+    const outcome = { status: "ok", events: r.events, result: r.result, resultKey: "9", baselineKey: "9", stdout: "", baselineStdout: "" };
     expect(validateRunOutcome(JSON.parse(JSON.stringify(outcome)), DEFAULT_LIMITS)).not.toBeNull();
   });
 

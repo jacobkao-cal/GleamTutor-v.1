@@ -387,3 +387,180 @@ New in 2D:
 - **stderr** is merged into Print Output.
 - **A stdlib call is one step,** so a crash inside the stdlib is reported at the student's line, not inside the stdlib.
 - **Bundling:** the whole 210 KB stdlib bundle is loaded by each run's worker, even when the program uses one module. A warm run of Hello world still finishes in roughly 0.4 s in the e2e suite.
+
+---
+
+## 14. Phase 3A status: lists and pattern matching
+
+### Architecture change: instrument the Gleam source, not the compiled JavaScript
+
+The compiled code of `case` expressions can't be mapped back to clauses. The official compiler turns `case` into a decision tree:
+- **Clauses get reordered:** for `[a, b, ..] / [a] / _`, the `_` body is emitted first.
+- **Clause bodies get rewritten:** `0 -> 0` became `return n`.
+- **Tail calls become loops:** self tail calls compile to `while (true)`.
+- **`let x = case …` changes shape:** it compiles to `let _block; if … _block = …`.
+
+All of these were observed in Gleam 1.19.2. Statement-by-statement alignment therefore had to go. The rest of the architecture is unchanged: the recogniser (extended), the sandbox, the recorder, the stdlib linking, the normaliser, the schema (extended) and the UI.
+
+`src/tracer/instrument.ts` now inserts **probe calls into the student's Gleam source** at regions the recogniser records:
+
+| Region | Probe |
+| --- | --- |
+| Function entry and parameters | `enter`, `arg` |
+| `let` and expression statements | `line`, then `bind` or `done` |
+| A function's final expression | `ret`, which returns its argument unchanged |
+| Each `case` expression | `close`, which returns its argument unchanged |
+| Each clause body | `match`, plus `pvar` for each pattern variable |
+
+The probes are typed `@external` functions appended to the module. The official compiler compiles the instrumented module, and `link.ts` supplies their implementation module. That module also registers the prelude's list classes with the recorder.
+
+Properties:
+- **The selected clause is observed, not inferred.** The `match` probe sits inside the clause body, so it runs exactly when that clause is selected, in whatever order the decision tree tests clauses.
+- **Values are still observed, never computed.** The probes are identity functions or return Nil. The run-twice check still requires the instrumented program's result and output to equal the uninstrumented program's. Results are now compared structurally (`valueKey`), so list cells match by content, not identity.
+- **Locations come from the original source** (Int literals in the probes), so inserted text never shifts what the trace reports.
+- **Tail calls:** in the instrumented program, `ret` wraps the final call, so the call is no longer in tail position. Self tail calls therefore run as ordinary recursion, one *logical* frame per call; the uninstrumented baseline still runs the compiler's loop. This is what Phase 3B needs. Labelling those frames as logical in the UI is 3B work. A tail call that never ends really does run forever (the baseline loops), so it ends in `timeout`. Previously it was refused.
+
+### Lists
+
+- **Recording:** a list value is recorded as a reference to its first cell. Cells are immutable, so each is recorded once, as a `node` event (head value plus the tail cell's id). The recorder tracks cell identity with a `WeakMap`, so shared tails stay shared: `[0, ..old]` adds one cell that points at `old`'s first cell.
+- **Schema:** two additions. `TraceValue` gains `empty-list`, and `TraceObject` gains `cons { head, tail }`.
+- **Display:** each step's Objects are the function objects plus every cell reachable from that step's frames. The diagram draws cells as `[ head | • ]` chains, one row per chain, with `[]` inline. A pattern variable such as `tail` points into the middle of the same chain.
+- **Bounds:** every cell is an event, so the event limit bounds list size (5,000 by default). Snapshot size counts cells too.
+
+### case and patterns
+
+- **Patterns supported:**
+  - literals: Int (including negative), String, True, False and Nil;
+  - variables and `_` / `_name` discards;
+  - list patterns `[]`, `[a, b]`, `[a, ..rest]`, `[a, ..]`, nested to any depth;
+  - several subjects (`case a, b`);
+  - guards (`x if x < 0`).
+- **Clause bodies** can be expressions or blocks.
+- **A `match` step** is shown at the clause line with its pattern variables bound.
+- **Scope:** pattern variables and a clause block's `let`s belong to the clause. When the case expression ends, the frame's bindings go back to what they were before it, at the frame's next step. At a `return` they're still shown, since they produced the returned value.
+- **Not supported yet (refused with a location):**
+  - alternative patterns `a | b`, string prefix patterns (`"a" <> rest`), `as`;
+  - tuple and constructor patterns;
+  - `let` destructuring;
+  - blocks outside clause bodies (Phase 3B).
+
+### Results
+
+- **Examples:** 8 of 20 library examples now trace (verified by `npm run tracer:audit`): hello, assignments, lists, functions, recursion, list-recursion, tail-calls and partitions.
+- **Engine tests:** 179 (21 new in `phase3a.test.ts`), covering:
+  - the spec example `first([3, 4, 5])`;
+  - GT-04, GT-05 (frames returning 0, 3, 5, 6) and tuple-free GT-07 (shared cells);
+  - decision-tree clause order, guards and several subjects;
+  - scope after a `case`, nested list patterns with shadowing, strings in lists with output;
+  - arrows, snapshot immutability and reachability;
+  - refusals, compiler errors (inexhaustive `case`), and the event limit for long lists.
+- **App tests:** 99, including a new component test for drawing list chains with shared tails.
+- **Browser e2e:** 16, including `first` and `sum` in Chrome (cells, pointers into the same chain, `[]` inline, and First/Next/Last).
+
+**Known limitations (3A):**
+- **Return arrows:** a function whose final expression is a `case` shows its `return` step on the `case` line, not on the selected clause's line.
+- **Tail-call frames:** tail-recursive programs show every logical frame, which can be many; the depth limit (500) still applies. They aren't yet labelled as logical frames.
+- **Stdlib calls returning lists** (e.g. `list.reverse`) are still refused; that's 3C.
+- **Long lists:** each cell is a separate box in a row, so long lists need horizontal scrolling in the Objects panel.
+
+---
+
+## 15. Phase 3B status: recursion and scope
+
+### Logical frames for tail calls
+
+**The problem.** For a self tail call (`_ -> count_down(n - 1, acc + 1)`), the official compiler emits a `while (true)` loop over `loop$` parameters, so the real program has one JavaScript frame. The instrumented program wraps the final expression with `ret`, so there the call is not a tail call and every call gets its own frame. That is right for teaching, but it isn't the runtime stack, and the diagram now says so.
+
+**How a call is labelled.** A frame is labelled "tail call" only when two things agree:
+1. **The source:** the recogniser finds a **self-call in tail position**. That position runs through the function's final expression, the bodies of a `case` in tail position, and the final expression of a block in tail position. A call combined with an operator (`1 + f(n - 1)`) is never a tail call.
+2. **The compiler:** `loopFunctionsIn` reads the *uninstrumented* compiled JavaScript and confirms the function really became a loop (`function f(loop$…) { while (true) {`).
+
+**How the label reaches the frame.** At such call sites the instrumenter wraps the **last argument** in `gleam_tutor_tail(frame, "f", arg)`, an identity probe. Arguments are evaluated left to right, so the marker is set just before the call. The recorder flags that call's event `tail`, and the normaliser sets `tailCall` on the frame. A call with no arguments is wrapped in a block that sets the marker first.
+
+**Result.**
+- The frame created from outside (e.g. by `main`) is a real frame.
+- Each recursive tail call is a logical frame. The diagram shows a small dashed "tail call" tag whose tooltip explains this.
+- Mutual recursion (`is_even` / `is_odd`) isn't compiled to a loop, so it isn't labelled. Neither is non-tail recursion (`sum`, factorial).
+- A test checks, for every library example, that each labelled frame belongs to a function the compiler made a loop.
+
+**Depth limit.** Every logical frame counts toward the call-depth limit (500). Deep tail recursion (e.g. counting down from 10,000) stops with "Call depth exceeded 500", even though the real program, being a loop, would finish.
+
+### Blocks
+
+`{ ... }` is now supported anywhere an expression is:
+- `let y = { ... }`;
+- a function's final expression;
+- grouping, as in `{ 1 + 2 } * 3`;
+- arguments.
+
+The instrumenter wraps a block in `gleam_tutor_close(frame, id, { gleam_tutor_open(frame, id) { … } })`. In the normaliser, `open` saves the frame's bindings and `close` restores them at the frame's next step, the same mechanism as `case` clauses (§14). The block's own `let`s, including shadowing an outer name, are visible inside it and gone after it. The outer binding is visible again, with its original `bindingId`.
+
+### Results
+
+- **Engine:** 193 tests (14 new in `phase3b.test.ts`), covering:
+  - GT-06, with exact frames and labels;
+  - factorial and mutual recursion, never labelled;
+  - labels agreeing with the compiler for every example;
+  - the Tail calls example, and tail calls found through blocks and nested `case`s;
+  - the depth limit on deep tail recursion;
+  - `loopFunctionsIn` and the marker rule;
+  - block scope, shadowing in blocks, blocks for grouping and as a function's result, return values through nested calls;
+  - identical traces on repeated runs.
+- **App:** 100 tests, including the "tail call" tag component test.
+- **Browser e2e:** 18 tests, including GT-06's labels in Chrome and a block's bindings disappearing.
+- **Examples:** unchanged at 8 of 20. No library example uses a block outside a `case` clause; the tail-call examples now carry their labels.
+
+**Known limitations (3B):**
+- **Depth limit:** logical frames count toward the depth limit (see above).
+- **Blocks have no step of their own:** the steps come from the statements inside them.
+- **Return arrows:** a function whose final expression is a `case` still shows its `return` step on the `case` line (§14).
+
+---
+
+## 16. Phase 3C status: imports and output
+
+### Investigation answers
+
+| Question | Answer (verified) |
+| --- | --- |
+| How does the official compiler resolve stdlib imports? | It needs the stdlib's **Gleam sources** to type-check. The compile worker writes all 19 modules of the pinned `gleam_stdlib` 1.0.5 (from `stdlib.sources.json`) next to `main` on every compile, which takes about 50–130 ms. Compiled code imports `./gleam/<module>.mjs`. At run time those imports are linked to facades over the precompiled stdlib bundle (§13). |
+| Which modules are available in the browser runtime? | All 19 (test: each one imports and compiles): `bit_array`, `bool`, `bytes_tree`, `dict`, `dynamic`, `dynamic/decode`, `float`, `function`, `int`, `io`, `list`, `option`, `order`, `pair`, `result`, `set`, `string`, `string_tree`, `uri`. "Available" means the import resolves and the code runs; which **calls** can be traced is decided per function (below). |
+| `gleam/io.println` and Print Output | Works since Phase 2D. Captured from the real stdlib output path and shown step by step. |
+| `gleam/list`, `gleam/int` | Verified in `phase3c.test.ts` against known Gleam results:<br>• **list:** `reverse`, `append`, `length`, `contains`, `take`, `drop`, `flatten`, `repeat`, `intersperse`, `unique`, `window`<br>• **int:** `to_string`, `max`, `absolute_value`, `sum`, `product`, `is_even`<br>• **string:** `split`, `join`, `uppercase`, `length`, `reverse`, `to_graphemes`, `replace` |
+| Arbitrary packages / remote loading | Not possible. The compiler only has the stdlib sources, so any other module is the compiler's "Unknown module" error. The message adds: "Only the Gleam standard library (gleam_stdlib 1.0.5) can be imported". Nothing is fetched at run time. |
+| Tracing inside the stdlib | Not done. Stdlib code is never instrumented: each stdlib call is one atomic step with no frame, while user functions keep their frames. |
+
+### Which stdlib calls are traceable
+
+A call is traceable when the function is public and its declared result type (read from the stdlib sources) is **displayable**: `Int`, `Bool`, `String`, `Nil`, `List(...)` of those, or a **type variable**.
+
+**Type variables are safe by parametricity.** A generic function can only return values that came in through its arguments. Every value a traced program can make is already displayable, because Floats, tuples, custom types and function values are refused where they would be created.
+
+**Coverage:** 164 of 353 public stdlib functions have a displayable result type, up from 108 in Phase 2D. Excluding the three random ones below, **161 are traceable**. By module: 42 in `gleam/list` (2 of them random), 25 in `gleam/int` (1 random) and 31 in `gleam/string`.
+
+**Still refused, with a reason:**
+- results of type `Float`, `Result`, `Option`, `Dict`, `Order` or tuples;
+- higher-order calls (`list.map(xs, f)`), because passing a function as a value isn't supported;
+- `int.random`, `float.random`, `list.shuffle` and `list.sample`, because the run-twice comparison needs deterministic results.
+
+**List results** are real stdlib values, recorded cell by cell. Where the stdlib shares structure, the trace shows it. For example, `list.drop(xs, 1)` is the rest of `xs`'s own cells, not a copy.
+
+### Import syntax
+
+- `import gleam/x`
+- `import gleam/x as y`
+- `import gleam/x.{f, f as g, type T, C}`
+
+Unqualified functions are called by name, with the same traceability check. Types can be imported. Imported constructors (`Some`) are refused where they're used, because custom types are Phase 4. Using an unqualified function as a value is refused.
+
+### Results
+
+- **Engine:** 212 tests (19 new in `phase3c.test.ts`).
+- **App:** 100 tests.
+- **Browser e2e:** 20 tests (new: unqualified and qualified imports with list results, and a higher-order call refused).
+- **Examples:** unchanged at 8 of 20. The option example now gets past its import and stops at `Some(...)` (custom type constructors, Phase 4).
+
+**Known limitations (3C):**
+- **stderr** (`io.println_error`) is merged into Print Output.
+- **Stdlib crashes** are reported at the student's line, because a stdlib call is one step.
+- **Load per run:** the whole 210 KB stdlib bundle is loaded by each run's worker.

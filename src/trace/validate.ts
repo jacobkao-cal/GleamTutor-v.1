@@ -28,6 +28,13 @@ export function validateTrace(trace: ExecutionTrace, source: string): string[] {
     const checkValue = (v: TraceValue, ctx: string) => {
       if (v.kind === "ref" && !objectIds.has(v.id)) problems.push(`${where}: ${ctx} refers to missing object ${v.id}`);
     };
+    for (const o of step.objects) {
+      if (o.kind === "cons") {
+        checkValue(o.head, `${o.id}.head`);
+        checkValue(o.tail, `${o.id}.tail`);
+        if (o.tail.kind !== "ref" && o.tail.kind !== "empty-list") problems.push(`${where}: ${o.id} has a tail that is not a list`);
+      }
+    }
     for (const f of step.frames) {
       if (frameIds.has(f.id)) problems.push(`${where}: duplicate frame id ${f.id}`);
       frameIds.add(f.id);

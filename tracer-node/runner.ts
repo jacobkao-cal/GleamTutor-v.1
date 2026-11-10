@@ -8,7 +8,7 @@ import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { TOOLCHAIN_DIR } from "./compiler";
 import { clampLimits, type RunLimits, type RunOutcome } from "../src/tracer/events";
-import { RECORDER_SYMBOL } from "../src/tracer/instrument";
+import { RECORDER_SYMBOL } from "../src/tracer/events";
 import type { ProgramFiles } from "../src/tracer/runtime";
 
 const WORKER_URL = new URL("./worker.mjs", import.meta.url);

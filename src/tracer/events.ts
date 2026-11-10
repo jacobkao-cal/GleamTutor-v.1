@@ -9,6 +9,8 @@ export type RawValue =
   | { kind: "bool"; value: boolean }
   | { kind: "string"; value: string }
   | { kind: "nil" }
+  /** A Gleam list: the id of its first cell (see the `node` event), or null for []. */
+  | { kind: "list"; node: number | null }
   /** A value the tracer cannot display yet; `jsType` describes it (e.g. "List"). */
   | { kind: "unsupported"; jsType: string };
 
@@ -17,9 +19,15 @@ export const MAX_STRING_VALUE = 10_000;
 /** Budget for all String values recorded in one run, together. */
 export const MAX_RECORDED_STRING_CHARS = 1_000_000;
 
+/** Name of the per-run recorder object on globalThis (Symbol.for). */
+export const RECORDER_SYMBOL = "gleam-tutor.tracer";
+
 export type RawEvent =
-  /** A function was entered; args are its parameter bindings. */
-  | { t: "call"; frame: number; fn: string; loc: RawLoc; args: [string, RawValue][] }
+  /**
+   * A function was entered; args are its parameter bindings. `tail`: a self
+   * tail call that the compiled program runs as a loop (a logical frame).
+   */
+  | { t: "call"; frame: number; fn: string; loc: RawLoc; args: [string, RawValue][]; tail?: boolean }
   /** A statement is about to be evaluated. */
   | { t: "line"; frame: number; loc: RawLoc }
   /** A `let` initializer finished; the name is now bound. */
@@ -29,14 +37,28 @@ export type RawEvent =
   /** An expression statement (e.g. `io.println(x)`) finished. */
   | { t: "done"; frame: number; loc: RawLoc }
   /** The program printed `text` (exactly what the stdlib wrote, newline included). */
-  | { t: "out"; text: string };
+  | { t: "out"; text: string }
+  /** A `case` clause was selected; `binds` are its pattern variables. */
+  | { t: "match"; frame: number; caseId: number; loc: RawLoc; binds: [string, RawValue][] }
+  /** The case expression or block `caseId` produced its value; its bindings go out of scope. */
+  | { t: "close"; frame: number; caseId: number }
+  /** A block started; its bindings belong to it until the matching `close`. */
+  | { t: "open"; frame: number; scopeId: number }
+  /**
+   * A list cell seen for the first time. Cells are immutable, so each is
+   * recorded once and referred to by id (shared tails stay shared).
+   */
+  | { t: "node"; id: number; head: RawValue; tail: number | null };
 
 export type RunOutcome =
   | {
       status: "ok";
       events: RawEvent[];
       result: RawValue;
-      baselineResult: RawValue;
+      /** Structural description of main()'s value, comparable across runs. */
+      resultKey: string;
+      /** The same for the uninstrumented run; must equal `resultKey`. */
+      baselineKey: string;
       stdout: string;
       /** Output of the uninstrumented run; must equal `stdout`. */
       baselineStdout: string;

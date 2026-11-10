@@ -138,10 +138,10 @@ describe("strings are recorded exactly", () => {
 
 describe("G: unsupported programs get a clear message and no trace", () => {
   it.each([
-    ["a list", 'import gleam/io\n\npub fn main() {\n  let xs = [1, 2]\n  io.println("x")\n}\n', "Lists"],
-    ["case", 'pub fn main() {\n  case 1 {\n    _ -> "one"\n  }\n}\n', "case expressions"],
-    ["a stdlib call returning a List", 'import gleam/string\n\npub fn main() {\n  string.split("a,b", ",")\n}\n', "Calling string.split (its result type, List(String), can't be shown yet)"],
-    ["an unqualified import (the option example's form)", example("option"), "Unqualified imports (import module.{...})"],
+    ["a tuple", 'import gleam/io\n\npub fn main() {\n  let t = #(1, 2)\n  io.println("x")\n}\n', "Tuples"],
+    ["a custom type constructor", 'pub fn main() {\n  let r = Ok(1)\n  1\n}\n', "Custom type constructors"],
+    ["a stdlib call returning a Dict", 'import gleam/dict\n\npub fn main() {\n  let d = dict.new()\n  1\n}\n', "Calling dict.new (its result type, Dict(k, v), can't be shown yet)"],
+    ["the option example (its Some/None constructors)", example("option"), "Custom type constructors"],
     ["a function capture (the hof example)", example("hof"), "Anonymous functions"],
   ])("%s", async (_name, src, feature) => {
     const r = await traceGleam(src);

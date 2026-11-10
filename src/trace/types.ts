@@ -31,8 +31,9 @@ export interface SourceLocation {
  *  - bind:   a `let` binding has been created after its initializer evaluated
  *  - eval:   an expression was evaluated without creating a binding
  *  - return: a function produced the value of its last expression
+ *  - match:  a `case` clause was selected; its pattern variables are now bound
  */
-export type TraceEventKind = "call" | "bind" | "eval" | "return";
+export type TraceEventKind = "call" | "bind" | "eval" | "return" | "match";
 
 /** Values shown in a binding cell. Primitives are inline; compound values are references. */
 export type TraceValue =
@@ -41,6 +42,8 @@ export type TraceValue =
   | { kind: "string"; value: string }
   | { kind: "bool"; value: boolean }
   | { kind: "nil" }
+  /** Gleam's empty list `[]` (shown inline; it has no cells). */
+  | { kind: "empty-list" }
   | { kind: "ref"; id: string }; // points at a TraceObject by logical id
 
 /**
@@ -50,6 +53,12 @@ export type TraceValue =
 export type TraceObject =
   | { id: string; kind: "function"; name: string; signature: string; module?: string }
   | { id: string; kind: "list"; items: TraceValue[] }
+  /**
+   * One cell of an immutable Gleam list: its first element and the rest of
+   * the list (a ref to the next cell, or empty-list). A cell never changes,
+   * and lists that share a tail share its cells.
+   */
+  | { id: string; kind: "cons"; head: TraceValue; tail: TraceValue }
   | { id: string; kind: "tuple"; items: TraceValue[] }
   | { id: string; kind: "record"; typeName: string; constructor: string; fields: { label?: string; value: TraceValue }[] };
 
@@ -76,6 +85,12 @@ export interface TraceFrame {
   bindings: TraceBinding[];
   /** Present once the call has produced its result. */
   returnValue?: TraceValue;
+  /**
+   * A logical frame: this call is a self tail call, which the compiled
+   * program runs as a loop reusing the caller's frame. It is drawn as its own
+   * frame so each step of the recursion can be seen.
+   */
+  tailCall?: boolean;
 }
 
 export interface TraceError {

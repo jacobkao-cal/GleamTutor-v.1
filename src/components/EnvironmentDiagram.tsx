@@ -34,6 +34,8 @@ function ValueCell({ value, srcKey }: { value: TraceValue; srcKey: string }) {
       return <span>{value.value ? "True" : "False"}</span>;
     case "nil":
       return <span>Nil</span>;
+    case "empty-list":
+      return <span className="value-empty-list">[]</span>;
     default:
       return <span>{value.value}</span>;
   }
@@ -43,7 +45,17 @@ function FrameBox({ frame, current }: { frame: TraceFrame; current: boolean }) {
   const cls = ["frame", current ? "frame-current" : "", frame.status === "exited" ? "frame-exited" : ""].join(" ").trim();
   return (
     <div className={cls} data-frame-id={frame.id} data-frame-status={frame.status}>
-      <div className="frame-header">{frameTitle(frame)}</div>
+      <div className="frame-header">
+        {frameTitle(frame)}
+        {frame.tailCall && (
+          <span
+            className="frame-tag"
+            title="Logical frame: this is a tail call. The compiled program runs it as a loop that reuses the caller's frame; it is drawn separately so you can follow each step of the recursion."
+          >
+            tail call
+          </span>
+        )}
+      </div>
       <table className="frame-vars">
         <tbody>
           {frame.bindings.map((b) => (
@@ -72,9 +84,57 @@ function FrameBox({ frame, current }: { frame: TraceFrame; current: boolean }) {
   );
 }
 
+/** One immutable list cell: [ head | tail ], the tail pointing at the next cell or shown as []. */
+function ConsCell({ obj }: { obj: Extract<TraceObject, { kind: "cons" }> }) {
+  return (
+    <div className="heap-cons" data-obj-id={obj.id}>
+      <span className="cons-head">
+        <ValueCell value={obj.head} srcKey={`${obj.id}:head`} />
+      </span>
+      <span className="cons-tail">
+        <ValueCell value={obj.tail} srcKey={`${obj.id}:tail`} />
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Lays list cells out as chains, one row per list that no other displayed
+ * cell continues; a cell whose tail is already drawn points back to it, so
+ * shared tails stay visibly shared.
+ */
+function objectRows(objects: TraceObject[]): TraceObject[][] {
+  const byId = new Map(objects.map((o) => [o.id, o]));
+  const continued = new Set<string>();
+  for (const o of objects) if (o.kind === "cons" && o.tail.kind === "ref") continued.add(o.tail.id);
+  const placed = new Set<string>();
+  const rows: TraceObject[][] = [];
+  for (const o of objects) {
+    if (placed.has(o.id)) continue;
+    if (o.kind !== "cons") {
+      rows.push([o]);
+      placed.add(o.id);
+      continue;
+    }
+    if (continued.has(o.id)) continue; // drawn as part of the chain that leads to it
+    const row: TraceObject[] = [];
+    for (let c: TraceObject | undefined = o; c && c.kind === "cons" && !placed.has(c.id); ) {
+      row.push(c);
+      placed.add(c.id);
+      c = c.tail.kind === "ref" ? byId.get(c.tail.id) : undefined;
+    }
+    rows.push(row);
+  }
+  // Cells only reachable as tails of each other (cannot happen for immutable lists), drawn anyway.
+  for (const o of objects) if (!placed.has(o.id)) rows.push([o]);
+  return rows;
+}
+
 function ObjectBox({ obj }: { obj: TraceObject }) {
   let body: ReactNode;
   switch (obj.kind) {
+    case "cons":
+      return <ConsCell obj={obj} />;
     case "function":
       body = <span className="object-function">{obj.signature}</span>;
       break;
@@ -157,8 +217,12 @@ export function EnvironmentDiagram({ step, showExitedFrames }: Props) {
       </div>
       <div className="objects-column">
         <div className="column-header">Objects</div>
-        {step.objects.map((o) => (
-          <ObjectBox key={o.id} obj={o} />
+        {objectRows(step.objects).map((row) => (
+          <div className="heap-row" key={row[0].id}>
+            {row.map((o) => (
+              <ObjectBox key={o.id} obj={o} />
+            ))}
+          </div>
         ))}
       </div>
       <svg className="pointer-layer" aria-hidden="true">

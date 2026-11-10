@@ -724,8 +724,54 @@ textarea {
   background: var(--color-object-bg);
   color: var(--gleam-navy);
 }
-.objects-column .column-header + .heap-object {
+.objects-column .column-header + .heap-row {
   margin-top: 30px;
+}
+/* One row per object, or per chain of list cells (cells left to right, joined by pointers). */
+.heap-row {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  margin-bottom: 14px;
+  width: max-content;
+}
+.heap-row .heap-object {
+  margin-bottom: 0;
+}
+/* Marks a logical frame (a tail call the compiled program runs as a loop). */
+.frame-tag {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px dashed var(--color-frame-border);
+  border-radius: var(--radius);
+  font-size: 11px;
+  color: var(--color-text-muted);
+  vertical-align: 1px;
+}
+/* An immutable list cell: [ head | tail ]. */
+.heap-cons {
+  display: inline-flex;
+  font-family: var(--font-code);
+  font-size: 14px;
+  border: 1px solid var(--color-object-border);
+  border-radius: var(--radius);
+  background: var(--color-object-bg);
+}
+.heap-cons > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  min-height: 24px;
+  padding: 2px 8px;
+}
+.heap-cons .cons-tail {
+  border-left: 1px solid var(--color-object-border);
+  min-width: 22px;
+  padding: 2px 6px;
+}
+.heap-cons .value-string {
+  color: #50a14f;
 }
 
 .pointer-layer {

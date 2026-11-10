@@ -16,7 +16,9 @@ import { runInWorker } from "./runner";
 const stdlib = loadStdlibInfo();
 const cell = (s: string) => s.replace(/\|/g, "\\|").replace(/\n/g, " ");
 
-/** Every unsupported construct we can find: unsupported tokens, plus the parser's first refusal. */
+const CONTEXTUAL = new Set(["case", "if", "[", "]", ".."]);
+
+/** Every unsupported construct we can find: the parser's first refusal, plus other unsupported tokens. */
 function missingFeatures(code: string): string[] {
   const found = new Set<string>();
   try {
@@ -24,7 +26,11 @@ function missingFeatures(code: string): string[] {
   } catch (e) {
     if (e instanceof UnsupportedError) found.add(`${e.feature} (line ${e.line})`);
   }
-  for (const t of tokenize(code) as { kind: string; feature?: string; line: number }[]) {
+  for (const t of tokenize(code) as { kind: string; text: string; feature?: string; line: number }[]) {
+    // Tokens the parser accepts in the right place (case, guards, lists, discards) are not missing features.
+    if (CONTEXTUAL.has(t.text) || t.text.startsWith("_")) continue;
+    // `type` and `as` inside an import (`import gleam/option.{type Option}`) are supported.
+    if ((t.text === "type" || t.text === "as") && /^\s*import\s/.test(code.split("\n")[t.line - 1] ?? "")) continue;
     if (t.kind === "bad" && ![...found].some((f) => f.startsWith(t.feature!))) found.add(`${t.feature} (line ${t.line})`);
   }
   return [...found];

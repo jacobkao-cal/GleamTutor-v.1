@@ -93,10 +93,10 @@ describe("real tracing in the browser", () => {
   });
 
   it("unsupported programs get a located notice", async () => {
-    await setSource('pub fn main() {\n  case 1 {\n    _ -> "one"\n  }\n}\n');
+    await setSource("pub fn main() {\n  let pair = #(1, 2)\n  1\n}\n");
     await visualize();
-    expect(await text('[role="alert"]')).toContain("doesn't support case expressions yet");
-    expect(await text('[role="alert"]')).toContain("(line 2, column 3)");
+    expect(await text('[role="alert"]')).toContain("doesn't support tuples yet");
+    expect(await text('[role="alert"]')).toContain("(line 2, column 14)");
   });
 
   it("runaway recursion is stopped by the depth limit", async () => {
@@ -211,7 +211,8 @@ describe("Phase 2D: gleam_stdlib, Strings and Print Output in the browser", () =
   it("the dropdown marks exactly the examples the tracer supports, computed from their code", async () => {
     await page.waitForFunction(() => [...document.querySelectorAll("option")].some((o) => o.textContent!.includes("(step-through)")));
     const marked = await page.$$eval("option", (os) => os.filter((o) => o.textContent!.includes("(step-through)")).map((o) => o.value));
-    expect(marked.sort()).toEqual(["assignments", "functions", "hello"]);
+    // Computed from each example's code; the engine suite checks these agree with real runs.
+    expect(marked.sort()).toEqual(["assignments", "functions", "hello", "list-recursion", "lists", "partitions", "recursion", "tail-calls"]);
   });
 
   it("Hello world prints both lines, step by step, and playback rewinds the output", async () => {
@@ -257,9 +258,140 @@ describe("Phase 2D: gleam_stdlib, Strings and Print Output in the browser", () =
   });
 
   it("an example the tracer cannot step through stays editable, with the reason", async () => {
-    await pick("Recursion: factorial");
+    await pick("Tuples");
     await visualize();
-    expect(await text('[role="alert"]')).toContain("doesn't support case expressions yet");
+    expect(await text('[role="alert"]')).toContain("doesn't support tuples yet");
     expect(await page.$('textarea[aria-label="Gleam source code"]')).not.toBeNull();
+  });
+});
+
+describe("Phase 3A: lists and case in the browser", () => {
+  const button = (label: string) => page.click(`xpath/.//button[contains(., '${label}')]`);
+  const FIRST = `pub fn first(xs: List(Int)) -> Int {
+  case xs {
+    [] -> 0
+    [head, ..tail] -> head
+  }
+}
+
+pub fn main() {
+  first([3, 4, 5])
+}
+`;
+  /** The cells drawn in the Objects column, row by row, as "head|tail". */
+  const rows = () =>
+    page.$$eval(".heap-row", (rs) =>
+      rs
+        .map((r) => [...r.querySelectorAll(".heap-cons")].map((c) => `${c.querySelector(".cons-head")!.textContent}|${c.querySelector(".cons-tail .ref-dot") ? "•" : c.querySelector(".cons-tail")!.textContent}`))
+        .filter((r) => r.length > 0),
+    );
+
+  it("first([3, 4, 5]): the selected clause, head = 3, tail pointing into the same list, return 3", async () => {
+    await setSource(FIRST);
+    await visualize();
+    expect(await text(".viz-language")).toContain("Live trace");
+    for (let i = 0; i < 4; i++) await button("Next");
+    expect(await text(".step-counter")).toBe("Step 5 of 7");
+    expect(await page.$eval('tr[data-arrow="just"]', (r) => r.getAttribute("data-line"))).toBe("4"); // [head, ..tail] -> head
+    expect(await text('[data-frame-id="frame-first-2"] [data-binding="head"] .frame-var-value')).toBe("3");
+    expect(await rows()).toEqual([["3|•", "4|•", "5|[]"]]);
+    const target = (b: string) => page.$eval(`[data-frame-id="frame-first-2"] [data-binding="${b}"] [data-ref-target]`, (e) => e.getAttribute("data-ref-target"));
+    const cellIds = await page.$$eval(".heap-cons", (cs) => cs.map((c) => c.getAttribute("data-obj-id")));
+    expect(await target("xs")).toBe(cellIds[0]);
+    expect(await target("tail")).toBe(cellIds[1]); // the rest of the same cells, not a copy
+    await button("Last");
+    expect(await text('[data-frame-id="frame-first-2"] [data-binding="__return"]')).toContain("3");
+    await button("First");
+    expect(await rows()).toEqual([]); // nothing exists before main runs
+  });
+
+  it("sum([1, 2, 3]) shows four logical frames and [] inline for the empty list", async () => {
+    await setSource(`pub fn sum(xs: List(Int)) -> Int {
+  case xs {
+    [] -> 0
+    [first, ..rest] -> first + sum(rest)
+  }
+}
+
+pub fn main() {
+  sum([1, 2, 3])
+}
+`);
+    await visualize();
+    await button("Last");
+    const frames = await page.$$eval('[data-frame-id^="frame-sum"]', (fs) =>
+      fs.map((f) => [f.querySelector('[data-binding="xs"] .frame-var-value')!.textContent, f.querySelector('[data-binding="__return"] .frame-var-value')!.textContent]),
+    );
+    expect(frames).toEqual([
+      ["", "6"],
+      ["", "5"],
+      ["", "3"],
+      ["[]", "0"],
+    ]); // the first three xs are pointers into the list (dots), the last is []
+    expect(await rows()).toEqual([["1|•", "2|•", "3|[]"]]);
+  });
+});
+
+describe("Phase 3B: recursion and scope in the browser", () => {
+  const button = (label: string) => page.click(`xpath/.//button[contains(., '${label}')]`);
+
+  it("GT-06: tail calls are drawn as labelled logical frames; the first call is a real frame", async () => {
+    await setSource(`pub fn count_down(n: Int, acc: Int) -> Int {
+  case n {
+    0 -> acc
+    _ -> count_down(n - 1, acc + 1)
+  }
+}
+
+pub fn main() {
+  count_down(3, 0)
+}
+`);
+    await visualize();
+    await button("Last");
+    const frames = await page.$$eval('[data-frame-id^="frame-count_down"]', (fs) =>
+      fs.map((f) => `${f.querySelector('[data-binding="n"] .frame-var-value')!.textContent}:${f.querySelector(".frame-tag")?.textContent ?? "real"}`),
+    );
+    expect(frames).toEqual(["3:real", "2:tail call", "1:tail call", "0:tail call"]);
+    expect(await text('[data-frame-id="frame-main-1"] [data-binding="__return"]')).toContain("3");
+  });
+
+  it("a block's bindings disappear when it ends", async () => {
+    await setSource("pub fn main() {\n  let x = 1\n  let y = {\n    let x = 10\n    x + 1\n  }\n  x + y\n}\n");
+    await visualize();
+    const names = () => page.$$eval('[data-frame-id="frame-main-1"] [data-binding]', (bs) => bs.map((b) => `${b.getAttribute("data-binding")}=${b.querySelector(".frame-var-value")!.textContent}`));
+    // Step to the inner `let x = 10`.
+    for (let i = 0; i < 3; i++) await button("Next");
+    expect(await names()).toEqual(["x=10"]);
+    await button("Last");
+    expect(await names()).toEqual(["x=1", "y=11", "__return=12"]);
+  });
+});
+
+describe("Phase 3C: imports and output in the browser", () => {
+  const button = (label: string) => page.click(`xpath/.//button[contains(., '${label}')]`);
+
+  it("unqualified and qualified stdlib imports; a list result is drawn as cells; output is real", async () => {
+    await setSource(`import gleam/io.{println}
+import gleam/list
+import gleam/string
+
+pub fn main() {
+  let words = string.split("c,b,a", ",")
+  let sorted = list.reverse(words)
+  println(string.join(sorted, " "))
+}
+`);
+    await visualize();
+    await button("Last");
+    expect(await page.$eval('textarea[aria-label="Print output"]', (t) => (t as HTMLTextAreaElement).value)).toBe("a b c\n");
+    const heads = await page.$$eval(".heap-cons .cons-head", (cs) => cs.map((c) => c.textContent));
+    expect(heads.sort()).toEqual(['"a"', '"a"', '"b"', '"b"', '"c"', '"c"']); // two lists of three cells
+  });
+
+  it("a higher-order stdlib call is refused with a reason", async () => {
+    await setSource("import gleam/int\nimport gleam/list\n\npub fn main() {\n  list.map([1], int.to_string)\n}\n");
+    await visualize();
+    expect(await text('[role="alert"]')).toContain("doesn't support using int.to_string as a value yet");
   });
 });

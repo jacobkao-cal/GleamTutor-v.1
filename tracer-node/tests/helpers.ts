@@ -41,6 +41,14 @@ export function eventSummary(r: Ok): string[] {
         return `out ${JSON.stringify(e.text)}`;
       case "done":
         return `done ${e.loc[0]}`;
+      case "match":
+        return `match ${e.loc[0]}(${e.binds.map(([n]) => n).join(", ")})`;
+      case "close":
+        return `close ${e.caseId}`;
+      case "open":
+        return `open ${e.scopeId}`;
+      case "node":
+        return `node ${e.id}`;
       default:
         return `line ${e.loc[0]}`;
     }

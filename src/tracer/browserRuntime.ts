@@ -15,7 +15,7 @@
  * loaded then. The page itself never evaluates compiled code.
  */
 import { clampLimits } from "./events";
-import { RECORDER_SYMBOL } from "./instrument";
+import { RECORDER_SYMBOL } from "./events";
 import { validateCompileReply, validateRunOutcome } from "./outcome";
 import { parseDiagnostic, type CompileOutput, type ProgramFiles, type TracerRuntime } from "./runtime";
 import type { StdlibInfo } from "./stdlib";

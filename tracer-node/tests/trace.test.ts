@@ -230,16 +230,16 @@ describe("failures are explicit", () => {
   });
 
   it.each([
-    ["unqualified imports", `import gleam/io.{println}\n\npub fn main() {\n  println("hi")\n}\n`, "Unqualified imports (import module.{...})", 1],
-    ["import aliases", `import gleam/io as out\n\npub fn main() {\n  out.println("hi")\n}\n`, "Aliases (as)", 1],
-    ["stdlib calls with List results", `import gleam/string\n\npub fn main() {\n  let parts = string.split("a,b", ",")\n  1\n}\n`, "Calling string.split (its result type, List(String), can't be shown yet)", 4],
+    ["stdlib functions passed as values", `import gleam/int\nimport gleam/list\n\npub fn main() {\n  list.map([1], int.to_string)\n}\n`, "Using int.to_string as a value", 5],
+    ["random stdlib functions", `import gleam/list\n\npub fn main() {\n  list.shuffle([1, 2])\n}\n`, "Calling list.shuffle (its result is different on every run)", 4],
+    ["stdlib calls with Result results", `import gleam/int\n\npub fn main() {\n  let n = int.parse("5")\n  1\n}\n`, "Calling int.parse (its result type, Result(Int, Nil), can't be shown yet)", 4],
     ["stdlib calls with Float results", `import gleam/int\n\npub fn main() {\n  let f = int.to_float(2)\n  1\n}\n`, "Calling int.to_float (its result type, Float, can't be shown yet)", 4],
     ["nondeterministic stdlib calls", `import gleam/int\n\npub fn main() {\n  int.random(10)\n}\n`, "Calling int.random (its result is different on every run)", 4],
-    ["case", `pub fn main() {\n  case 1 {\n    _ -> 2\n  }\n}\n`, "case expressions", 2],
-    ["lists", `pub fn main() {\n  let xs = [1, 2]\n  xs\n}\n`, "Lists", 2],
+    ["tuples", `pub fn main() {\n  let t = #(1, 2)\n  1\n}\n`, "Tuples", 2],
+    ["alternative patterns", `pub fn main() {\n  case 1 {\n    1 | 2 -> 0\n    _ -> 1\n  }\n}\n`, "Alternative patterns", 3],
     ["floats", `pub fn main() {\n  let f = 1.5\n  f\n}\n`, "Floats", 2],
     ["anonymous fns", `pub fn main() {\n  let f = fn(x) { x }\n  f(1)\n}\n`, "Anonymous functions", 2],
-    ["blocks", `pub fn main() {\n  let y = {\n    3\n  }\n  y\n}\n`, "Blocks", 2],
+    ["pipelines", `fn inc(x: Int) -> Int {\n  x + 1\n}\n\npub fn main() {\n  1 |> inc\n}\n`, "Pipelines", 6],
     ["custom types", `pub type T {\n  A\n}\n\npub fn main() {\n  1\n}\n`, "Custom types", 1],
     ["functions as values", `fn id(x: Int) -> Int {\n  x\n}\n\npub fn main() {\n  let f = id\n  f(1)\n}\n`, "Using the function id as a value", 6],
   ])("%s are rejected with a location instead of being traced", async (_, src, feature, line) => {
@@ -248,10 +248,9 @@ describe("failures are explicit", () => {
     if (r.status === "unsupported") expect(r).toMatchObject({ feature, line });
   });
 
-  it("a self tail call (compiled to a loop) is refused, not guessed", async () => {
-    const r = await traceGleam(`fn down(n: Int) -> Int {\n  down(n - 1)\n}\n\npub fn main() {\n  down(3)\n}\n`);
-    expect(r.status).toBe("unsupported");
-    if (r.status === "unsupported") expect(r.message).toMatch(/Could not map the compiled code back to the source/);
+  it("a self tail call that never ends really runs forever (the compiler makes it a loop), so it times out", async () => {
+    const r = await traceGleam(`fn down(n: Int) -> Int {\n  down(n - 1)\n}\n\npub fn main() {\n  down(3)\n}\n`, { timeoutMs: 500 });
+    expect(r.status).toBe("timeout");
   });
 
   it("runaway recursion hits the call-depth limit", async () => {

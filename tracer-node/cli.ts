@@ -20,7 +20,7 @@ if (flag === "--json") {
   console.log(JSON.stringify(result, (k, v) => (k === "events" || k === "trace" ? undefined : v), 2));
 } else {
   const show = (v: { kind: string; value?: unknown; id?: string }) =>
-    v.kind === "ref" ? `→${v.id}` : v.kind === "nil" ? "Nil" : v.kind === "string" ? JSON.stringify(v.value) : String(v.value);
+    v.kind === "ref" ? `→${v.id}` : v.kind === "nil" ? "Nil" : v.kind === "empty-list" ? "[]" : v.kind === "string" ? JSON.stringify(v.value) : String(v.value);
   console.log(`status: ok   (Gleam ${result.gleamVersion}, ${result.trace.steps.length} steps, main() = ${show(result.result)})\n`);
   for (const s of result.trace.steps) {
     const frames = s.frames

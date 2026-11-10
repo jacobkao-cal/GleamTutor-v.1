@@ -2,7 +2,8 @@
  * The Phase 2B tracing engine pipeline:
  *
  *   Gleam source -> official compiler, with gleam_stdlib (Runtime)
- *   -> subset check + source anchors -> instrumentation -> link to the stdlib
+ *   -> subset check + source regions -> probe-instrumented Gleam source
+ *   -> official compiler again -> link both programs to the stdlib
  *   -> isolated execution (Runtime) -> raw events + printed output
  *   -> differential check -> normalized ExecutionTrace -> validateTrace
  *
@@ -12,7 +13,7 @@
 import type { ExecutionTrace } from "../trace/types";
 import { validateTrace } from "../trace/validate";
 import { clampLimits, type RawEvent, type RawValue, type RunLimits } from "./events";
-import { AlignmentError, instrument } from "./instrument";
+import { instrumentSource, loopFunctionsIn } from "./instrument";
 import { NormalizeError, NormalizeLimitError, normalize } from "./normalize";
 import type { Diagnostic, TracerRuntime } from "./runtime";
 import { LinkError, linkProgram } from "./link";
@@ -30,6 +31,8 @@ export type EngineResult =
       /** Value of main(), from the instrumented run. */
       result: RawValue;
       compiledJs: string;
+      /** The probe-instrumented Gleam source (instrument.ts). */
+      instrumentedSource: string;
       instrumentedJs: string;
       gleamVersion: string;
     }
@@ -71,14 +74,17 @@ export async function traceGleam(
     return { status: "internal_error", message: `Subset check failed: ${describe(e)}` };
   }
 
-  // 3. Align the compiled JS with the source, then instrument. A mismatch is refused, never guessed.
+  // 3. Instrument the Gleam source with probes and compile it with the same official compiler.
   let instrumentedJs: string;
+  let instrumentedSource: string;
   try {
-    instrumentedJs = instrument(compiled.js, module);
-  } catch (e) {
-    if (e instanceof AlignmentError) {
-      return { status: "unsupported", feature: "Compiled code shape", message: `Could not map the compiled code back to the source (${e.message})` };
+    instrumentedSource = instrumentSource(source, module, { loopFunctions: loopFunctionsIn(compiled.js) });
+    const again = await runtime.compile(instrumentedSource);
+    if (!again.ok) {
+      return { status: "internal_error", message: `The instrumented program did not compile (${again.diagnostic.title}, line ${again.diagnostic.line ?? "?"})` };
     }
+    instrumentedJs = again.js;
+  } catch (e) {
     return { status: "internal_error", message: `Instrumentation failed: ${describe(e)}` };
   }
 
@@ -105,10 +111,10 @@ export async function traceGleam(
       return { status: "runtime_error", message: run.message, events: run.events, trace };
     }
     // 5. Differential check: instrumentation must not change the program's result or output.
-    if (JSON.stringify(run.result) !== JSON.stringify(run.baselineResult)) {
+    if (run.resultKey !== run.baselineKey) {
       return {
         status: "internal_error",
-        message: `Instrumented result ${JSON.stringify(run.result)} differs from uninstrumented ${JSON.stringify(run.baselineResult)}`,
+        message: `Instrumented result ${run.resultKey.slice(0, 200)} differs from uninstrumented ${run.baselineKey.slice(0, 200)}`,
       };
     }
     if (run.stdout !== run.baselineStdout) {
@@ -124,7 +130,16 @@ export async function traceGleam(
     const trace = normalize(source, module, run.events);
     const problems = validateTrace(trace, source);
     if (problems.length) return { status: "internal_error", message: `Invalid trace: ${problems.join("; ")}` };
-    return { status: "ok", trace, events: run.events, result: run.result, compiledJs: compiled.js, instrumentedJs, gleamVersion: runtime.gleamVersion };
+    return {
+      status: "ok",
+      trace,
+      events: run.events,
+      result: run.result,
+      compiledJs: compiled.js,
+      instrumentedSource,
+      instrumentedJs,
+      gleamVersion: runtime.gleamVersion,
+    };
   } catch (e) {
     if (e instanceof NormalizeError) return { status: "unsupported", feature: "Recorded value", message: e.message };
     if (e instanceof NormalizeLimitError) return { status: "limit", message: e.message, events: [] };

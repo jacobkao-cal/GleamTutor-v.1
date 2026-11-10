@@ -333,6 +333,8 @@ Exit: the UI is faithful and functional **for the identified fixture only**; no 
 
 Exit: evidence that a modified, supported source program produces a **new real trace**, with test output recorded.
 
+**Status: done (Phases 2A–2D).** Programs run in a browser sandbox, with the official compiler 1.19.2 and `gleam_stdlib` 1.0.5. Supported: Int, Bool, String and Nil values, `let`, shadowing, calls, `<>`, Print Output, and stdlib calls as atomic steps. See `docs/PHASE_2_ARCHITECTURE.md`.
+
 ### Phase 3 — CS 61A core semantics
 
 - Recursive calls, nested frames, return propagation.
@@ -342,6 +344,16 @@ Exit: evidence that a modified, supported source program produces a **new real t
 - Tests for step ordering and arrows after nested calls/returns.
 
 Exit: golden programs pass both runtime-result and per-step semantic assertions.
+
+**Status:**
+
+| Sub-phase | Scope | State |
+| --- | --- | --- |
+| **3A** | Lists and pattern matching | **Implemented.** Covers list literals, `[]`, `[x, ..xs]`, `case` (incl. guards, several subjects and nested list patterns), pattern-bound variables and their scope, and immutable lists drawn as shared cells. |
+| **3B** | Recursion and scope | **Implemented.** Nested frames and return values for recursion over lists. Self tail calls are shown as labelled **logical frames** ("tail call"), and only where the official compiler really compiled the function to a loop; mutual recursion is never labelled. Blocks `{ ... }` work anywhere, with their own scope, and shadowing inside a block ends with it. |
+| **3C** | Imports and output | **Implemented.** All 19 `gleam_stdlib` 1.0.5 modules resolve. `gleam/io` output appears in Print Output. Stdlib calls are atomic steps; a call is traceable when its declared result type is Int, Bool, String, Nil, `List(...)` or a type variable (161 of 353 functions; the random ones are excluded). `gleam/list`, `gleam/int` and `gleam/string` results are verified against known Gleam values. Unqualified imports and `as` aliases work. Unknown modules, higher-order calls and non-displayable results are refused with a reason. |
+
+Details are in `docs/PHASE_2_ARCHITECTURE.md` §14 (3A), §15 (3B) and §16 (3C).
 
 ### Phase 4 — Extended Gleam language
 
@@ -361,6 +373,18 @@ Exit: golden programs pass both runtime-result and per-step semantic assertions.
 ## 8. Golden Test Programs (language and visualization verification)
 
 Test both **correct program result** and **expected source-level events/frames**. If a program is outside current support, return a clear unsupported status.
+
+### Golden test status (verified by `npm run tracer:test`)
+
+| Test | State |
+| --- | --- |
+| GT-01 | Passes. The real trace ends in the same state as the Demo trace. |
+| GT-02 | Passes (Phase 2D). |
+| GT-03 | Refused with "Tuples" as written (Phase 4). A tuple-free version passes. |
+| GT-04 | Passes (Phase 3A). |
+| GT-05 | Passes (Phase 3A): four logical frames returning 0, 3, 5 and 6. |
+| GT-06 | Passes (Phase 3B). The call from `main` is a real frame; the three recursive tail calls are labelled "tail call" (logical frames: the compiled program runs them as a loop). |
+| GT-07 | The tuple-free version passes: shared cells, and `old` is unchanged. The tuple is Phase 4. |
 
 ### GT-01 — Simple call and bindings (first real tracer milestone)
 
@@ -499,12 +523,12 @@ Expected `#([1, 2, 3], [0, 1, 2, 3])`; unchanged `old`. Conceptual shared-tail d
 
 ### Phase 2+ (real execution)
 
-- [ ] Actual compiler is used for supported Gleam programs.
-- [ ] Trace comes from real evaluation and reflects edits to the source.
-- [ ] Calls, bindings, returns, source locations and output have automated tests.
-- [ ] Shadowing, immutability, `case`, and recursion agree with Gleam semantics.
-- [ ] Compile errors and unsupported constructs are not silently visualized.
-- [ ] Execution limits and isolation policy are documented and tested.
+- [x] Actual compiler is used for supported Gleam programs.
+- [x] Trace comes from real evaluation and reflects edits to the source.
+- [x] Calls, bindings, returns, source locations and output have automated tests.
+- [x] Shadowing, immutability, `case`, and recursion agree with Gleam semantics, including logical frames for tail calls.
+- [x] Compile errors and unsupported constructs are not silently visualized.
+- [x] Execution limits and isolation policy are documented and tested.
 
 ---
 

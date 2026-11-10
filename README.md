@@ -2,7 +2,15 @@
 
 **A Python Tutor-style execution visualizer for Gleam, designed for students learning functional programming in UC Berkeley CS 61A.**
 
-> **Project status: Phase 2D.** Edited Gleam code is compiled by the official Gleam compiler, with the official standard library (`gleam_stdlib`), and run for real **in the browser**, inside a sandboxed iframe. The tracer steps through a subset: Int, Bool, String and Nil values, `let`, `<>`, arithmetic and comparisons, calls to your own functions (including recursion), and standard-library calls such as `io.println` and `int.to_string`, with real output in **Print Output**. Anything else gets a clear "not supported yet" message with its location. 3 of the 20 library examples are traceable ([compatibility report](docs/PHASE_2D_COMPATIBILITY.md)). The exact GT-01 `square(5)` example keeps its predefined, clearly labelled **Demo trace**.
+> **Project status: Phase 3 (3A–3C) complete.** Edited Gleam code is compiled by the official Gleam compiler, with the official standard library (`gleam_stdlib`), and run for real **in the browser**, inside a sandboxed iframe. The tracer steps through:
+> - Int, Bool, String and Nil values; `let`; `<>`; arithmetic and comparisons;
+> - calls to your own functions, including recursion. Tail calls, which Gleam runs as a loop, are drawn as labelled **logical frames**;
+> - **lists** (`[1, 2]`, `[x, ..xs]`, `[]`), drawn as immutable linked cells;
+> - **`case` expressions** with list and literal patterns, guards and pattern-bound variables;
+> - **blocks** `{ ... }` with their own scope;
+> - standard-library calls such as `io.println`, `int.to_string`, `list.reverse` and `string.split`, with real output in **Print Output**. Unqualified imports (`import gleam/io.{println}`) and aliases (`as`) work too.
+>
+> Anything else gets a clear "not supported yet" message with its location. 8 of the 20 library examples are traceable ([compatibility report](docs/PHASE_2D_COMPATIBILITY.md)). The exact GT-01 `square(5)` example keeps its predefined, clearly labelled **Demo trace**.
 
 ## The idea
 
@@ -86,7 +94,7 @@ See **[PROJECT_SPEC.md](PROJECT_SPEC.md)** for all requirements and acceptance t
 | M0 — Product spec and references | Confirm scope, screenshot fidelity, Gleam semantics | Done |
 | M1 — UI and trace playback | Two screens and fully working navigation over a clearly labeled trace fixture | Prototype done (fixture only) |
 | M2 — Real tracing feasibility | Produce real source-mapped call/binding/return events for a tiny Gleam example | Done, running in the browser sandbox. Phase 2D added `gleam_stdlib`, Strings and Print Output ([report](docs/PHASE_2_ARCHITECTURE.md), [engine](tracer-node/README.md), [examples](docs/PHASE_2D_COMPATIBILITY.md)) |
-| M3 — Supported core language | Add recursion, lists, pattern matching with semantic tests | Not started |
+| M3 — Supported core language | Add recursion, lists, pattern matching with semantic tests | Done: 3A (lists, `case`), 3B (recursion, logical tail-call frames, block scope), 3C (stdlib imports, list results, unqualified imports) ([details](docs/PHASE_2_ARCHITECTURE.md)) |
 | M4 — Validation and release | Expand coverage, test edge cases, evaluate safe deployment | Not started |
 
 ### First tracing test (not yet supported)
@@ -152,6 +160,8 @@ The `gleam-style` branch keeps the Python Tutor structure and behaviour unchange
 - **Layout:** content is centred with a 1260px maximum width.
 - **Frames:** the current frame is light pink, other frames have a soft pink border, and exited frames are faded and dashed.
 - **Objects and arrows:** function objects are soft-blue boxes, and pointer arrows are navy.
+- **Tail calls:** a frame created by a self tail call carries a small dashed "tail call" tag. Its tooltip explains that this is a logical frame: the compiled program runs the call as a loop.
+- **Lists:** shown as immutable linked cells `[ head | • ]` in the same soft blue, one chain per row, with `[]` written inline. Lists that share a tail point at the same cells.
 - **Source arrows:** the just-executed line gets a green arrow with a menthol row tint, and the next line a red arrow with a light red tint. The exact expression is still underlined in the matching colour.
 - **Demo trace badge:** "Demo trace (predefined, not a live execution)" is shown as a yellow badge.
 - **Narrow screens:** below 920px the visualizer stacks into code and controls, then output and diagram, keeping the same order. A diagram wider than the screen scrolls inside its panel and is never clipped.
@@ -163,7 +173,7 @@ The **Choose an example...** dropdown in Edit Mode lists the examples in `exampl
 - Picking an example only loads its code into the editor, where it stays fully editable. Nothing is run or visualized automatically.
 - The dropdown shows an example's name only while the editor text matches that example exactly. After any edit it shows the placeholder again.
 - If the editor holds the student's own code, the app asks before replacing it.
-- **Traceable examples** are marked "(step-through)": Hello world, Assignments and shadowing, and Functions. The mark is computed from each example's code with the tracer's own capability check, never from a list of names. A test checks that it agrees with the real tracer.
+- **Traceable examples** are marked "(step-through)": Hello world, Assignments and shadowing, Lists share their tails, Functions, Recursion: factorial, List recursion, Tail calls with an accumulator, and Tree recursion: count partitions. The mark is computed from each example's code with the tracer's own capability check, never from a list of names. A test checks that it agrees with the real tracer.
 - **Every other example** stays selectable and editable. Visualize Execution names the first construct the tracer can't step through yet, and where it is.
 - **All 20 examples** compile with Gleam 1.19.2 (`gleam_stdlib` 1.0.5) and run on the JavaScript target; `let assert` crashes on purpose. Verified results are in [docs/PHASE_2D_COMPATIBILITY.md](docs/PHASE_2D_COMPATIBILITY.md); regenerate them with `npm run tracer:audit`.
 

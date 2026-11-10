@@ -40,6 +40,9 @@
     "tests/engine.test.ts",
     "tests/sandbox.test.ts",
     "tests/phase2d.test.ts",
+    "tests/phase3a.test.ts",
+    "tests/phase3b.test.ts",
+    "tests/phase3c.test.ts",
     "vitest.config.ts",
     "audit.ts"
   ]
